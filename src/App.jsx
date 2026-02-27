@@ -5063,8 +5063,6 @@ export default function App() {
             flights={flights}
             enabledAircraft={enabledAircraft}
             setEnabledAircraft={setEnabledAircraft}
-            activeLogo={activeLogo}
-            setActiveLogo={setActiveLogo}
           />
         )}
 
