@@ -4840,7 +4840,8 @@ export default function App() {
               onChange={e => setNewCrew(n => ({ ...n, seniority: e.target.value.toUpperCase() }))}
               onBlur={e => {
                 const v = e.target.value.trim();
-                if (/^\d{1,3}$/.test(v)) setNewCrew(n => ({ ...n, seniority: `CLASS ${v}` }));
+                const isShortNumber = v.length >= 1 && v.length <= 3 && v.split("").every(ch => ch >= "0" && ch <= "9");
+                if (isShortNumber) setNewCrew(n => ({ ...n, seniority: `CLASS ${v}` }));
               }}
               placeholder={newCrew.type === "teacher" ? "Staff ID / Class" : "CLASS"}
               autoComplete="off"
@@ -4874,7 +4875,8 @@ export default function App() {
               if (dupNick) { setAddCrewErr(`"${newCrew.nickname}" 已有同名機師 (${dupNick.name} · ${dupNick.seniority})`); return; }
               // Auto-format CLASS if pure digits
               let sen = newCrew.seniority.trim();
-              if (/^\d{1,3}$/.test(sen)) sen = `CLASS ${sen}`;
+              const isShortNumber = sen.length >= 1 && sen.length <= 3 && sen.split("").every(ch => ch >= "0" && ch <= "9");
+              if (isShortNumber) sen = `CLASS ${sen}`;
               setCrew(cr => [...cr, {
                 id:          newCrew.id.trim(),
                 name:        newCrew.name.trim(),
@@ -5093,7 +5095,8 @@ export default function App() {
                     onChange={e => setTempCrewInfo(t => ({ ...t, seniority: e.target.value.toUpperCase() }))}
                     onBlur={e => {
                       const v = e.target.value.trim();
-                      if (/^\d{1,3}$/.test(v)) setTempCrewInfo(t => ({ ...t, seniority: `CLASS ${v}` }));
+                      const isShortNumber = v.length >= 1 && v.length <= 3 && v.split("").every(ch => ch >= "0" && ch <= "9");
+                      if (isShortNumber) setTempCrewInfo(t => ({ ...t, seniority: `CLASS ${v}` }));
                     }}
                     placeholder="CLASS"
                     autoComplete="off"
