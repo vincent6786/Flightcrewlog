@@ -780,7 +780,7 @@ const flightDoc = (username) => doc(db, "crewlog", `flights-${username}`);
     id:         string   — employee ID (unique primary key)
     nickname:   string   — English callsign / display name
     name:       string   — Chinese/Japanese full name
-    seniority:  string   — training batch e.g. "24G"
+    seniority:  string   — class / batch / origin e.g. "Class 83", "Ex-CAL", "Direct Entry"
     status:     "red" | "yellow" | "green" | null
     tags:       string[] — subset of allTags
     notes:      string   — long-form shared notes
@@ -3047,7 +3047,7 @@ function GuideView({ onBack, c }) {
     },
     {
       emoji: "🔒", title: "隱私設計", en: "Privacy",
-      content: "飛行紀錄 (備忘、航班、飛行時間) 是完全私人的 — 只有你看得到，不會同步給其他用戶。\n\n機師的基本資料 (名字、期別) 和紅黃綠燈、標籤則是大家共享的，讓整個 app 的資料保持最新。\n\nYour flight logs, memos, and block hours are private (only you see them). Pilot info, status lights, and tags are shared so everyone benefits.",
+      content: "飛行紀錄 (備忘、航班、飛行時間) 是完全私人的 — 只有你看得到，不會同步給其他用戶。\n\n機師的基本資料 (名字、Class/期別) 和紅黃綠燈、標籤則是大家共享的，讓整個 app 的資料保持最新。\n\nYour flight logs, memos, and block hours are private (only you see them). Pilot info, status lights, and tags are shared so everyone benefits.",
     },
     {
       emoji: "🔴🟡🟢", title: "紅黃綠燈", en: "Status Lights", isList: true,
@@ -4574,15 +4574,15 @@ export default function App() {
           <div style={{ fontSize: 10, color: c.sub, marginBottom: 12 }}>⚠ Shared with all pilots</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
             <ClearableInput value={newCrew.id}        onChange={e => setNewCrew(n => ({ ...n, id:        e.target.value }))} placeholder="員工 ID *"        autoComplete="off" style={{ ...inp, fontSize: 13, padding: "9px 12px" }} c={c} />
-            <ClearableInput value={newCrew.nickname}  onChange={e => setNewCrew(n => ({ ...n, nickname:  e.target.value }))} placeholder="Callsign *"        autoComplete="off" style={{ ...inp, fontSize: 13, padding: "9px 12px" }} c={c} />
-            <ClearableInput value={newCrew.name}      onChange={e => setNewCrew(n => ({ ...n, name:      e.target.value }))} placeholder="姓名 (中文)" autoComplete="off" style={{ ...inp, fontSize: 13, padding: "9px 12px" }} c={c} />
-            <ClearableInput value={newCrew.seniority} onChange={e => setNewCrew(n => ({ ...n, seniority: e.target.value }))} placeholder="受訓期 e.g. BR-P150"     autoComplete="off" style={{ ...inp, fontSize: 13, padding: "9px 12px" }} c={c} />
+            <ClearableInput value={newCrew.nickname}  onChange={e => setNewCrew(n => ({ ...n, nickname:  e.target.value }))} placeholder="Eng Name *"                     autoComplete="off" style={{ ...inp, fontSize: 13, padding: "9px 12px" }} c={c} />
+            <ClearableInput value={newCrew.name}      onChange={e => setNewCrew(n => ({ ...n, name:      e.target.value }))} placeholder="Full Name 姓名"                autoComplete="off" style={{ ...inp, fontSize: 13, padding: "9px 12px" }} c={c} />
+            <ClearableInput value={newCrew.seniority} onChange={e => setNewCrew(n => ({ ...n, seniority: e.target.value }))} placeholder="Class 83 / Airline / Direct" autoComplete="off" style={{ ...inp, fontSize: 13, padding: "9px 12px" }} c={c} />
           </div>
           {addCrewErr && <div style={{ color: "#FF453A", fontSize: 12, marginBottom: 8 }}>{addCrewErr}</div>}
           <button
             onClick={() => {
               setAddCrewErr("");
-              if (!newCrew.id.trim() || !newCrew.nickname.trim()) { setAddCrewErr("ID 和 Callsign 為必填"); return; }
+              if (!newCrew.id.trim() || !newCrew.nickname.trim()) { setAddCrewErr("ID 和 Eng Name 為必填"); return; }
               if (crew.find(m => m.id === newCrew.id.trim()))     { setAddCrewErr("此 ID 已存在"); return; }
               const dupNick = crew.find(m => m.nickname.toLowerCase() === newCrew.nickname.trim().toLowerCase());
               if (dupNick) { setAddCrewErr(`"${newCrew.nickname}" 已有同名機師 (${dupNick.name} · ${dupNick.seniority})`); return; }
@@ -4789,7 +4789,7 @@ export default function App() {
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <ClearableInput value={tempCrewInfo.nickname}  onChange={e => setTempCrewInfo(t => ({ ...t, nickname:  e.target.value }))} placeholder="Nickname *"   autoComplete="off" style={{ ...inp, borderRadius: 12, padding: "10px 14px" }} c={c} />
                 <ClearableInput value={tempCrewInfo.name}      onChange={e => setTempCrewInfo(t => ({ ...t, name:      e.target.value }))} placeholder="姓名"          autoComplete="off" style={{ ...inp, borderRadius: 12, padding: "10px 14px" }} c={c} />
-                <ClearableInput value={tempCrewInfo.seniority} onChange={e => setTempCrewInfo(t => ({ ...t, seniority: e.target.value }))} placeholder="受訓期 e.g. BR-P150" autoComplete="off" style={{ ...inp, borderRadius: 12, padding: "10px 14px" }} c={c} />
+                <ClearableInput value={tempCrewInfo.seniority} onChange={e => setTempCrewInfo(t => ({ ...t, seniority: e.target.value }))} placeholder="Class 83 / Airline / Direct" autoComplete="off" style={{ ...inp, borderRadius: 12, padding: "10px 14px" }} c={c} />
               </div>
             ) : (
               <div style={{ background: c.cardAlt, border: `1px solid ${c.border}`, borderRadius: 12, padding: "10px 14px", fontSize: 13, color: c.sub, lineHeight: 1.8 }}>
