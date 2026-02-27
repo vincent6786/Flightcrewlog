@@ -3489,7 +3489,6 @@ export default function App() {
         setAppShowAcStats(s.showAcStats    !== false);
         setAppShowRouteStats(s.showRouteStats !== false);
         if (Array.isArray(s.enabledAircraft)) setEnabledAircraft(s.enabledAircraft);
-        }
       }
     }).catch(() => {});
     if (layer1 === "ok" && layer2 === "ok" && saved) { setUsername(saved); setAuthStep("app"); }
