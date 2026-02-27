@@ -1621,7 +1621,6 @@ function ThemeGalleryView({ onBack, themeKey, setThemeKey, c }) {
           💡 Tip: Your theme preference is saved automatically
         </div>
       </div>
-      </div>
     </div>
   );
 }
@@ -2806,11 +2805,6 @@ function SettingsView({
           <span style={{ color: c.accent, fontWeight: 700 }}>Your logs are safe & private.</span>
         </div>
       </div>
-      </div>
-      </div>
-      </div>
-      </div>
-      </div>
     </div>
   );
 }
@@ -3220,7 +3214,6 @@ function QuickLogView({ crew, routes, setRoutes, initialForm, editFlightId, onSa
           {editFlightId ? "✏ 更新紀錄 UPDATE LOG" : "✈ 儲存紀錄 SAVE LOG"}
         </button>
       </div>
-      </div>
     </div>
   );
 }
@@ -3529,8 +3522,6 @@ function MyLogView({ flights, crew, username, onBack, onGoProfile, onEdit, c }) 
             </div>
           ))
         )}
-      </div>
-      </div>
       </div>
     </div>
   );
@@ -5286,8 +5277,6 @@ export default function App() {
             )}
           </div>
         </div>
-      </div>
-      </div>
       </div>
     );
   };
