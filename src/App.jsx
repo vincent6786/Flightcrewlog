@@ -70,6 +70,13 @@ const POSITION_LABELS = {
 /** Pilot Flying / Monitoring roles for each flight leg. */
 const PILOT_ROLES = ["PF", "PM", "Observer"];
 
+/** Available logo options (files must exist in /public/) */
+const LOGOS = [
+  { id: "logo",  src: "/logo.png",  label: "Logo 1" },
+  { id: "logo2", src: "/logo2.png", label: "Logo 2" },
+  { id: "logo3", src: "/logo3.png", label: "Logo 3" },
+];
+
 /**
  * Status light definitions.
  * Each key maps to display emoji, human-readable label, and CSS colour tokens.
@@ -1728,6 +1735,7 @@ function SettingsView({
   defaultAircraft, setDefaultAircraft, defaultPosition, setDefaultPosition,
   customTags, setCustomTags, onImport, routes, setRoutes, flights,
   enabledAircraft, setEnabledAircraft,
+  activeLogo, saveActiveLogo,
 }) {
   const dark = themeKey?.endsWith("Dark") ?? true;
   const [newTag,       setNewTag]       = useState("");
@@ -1884,6 +1892,23 @@ function SettingsView({
       setEnabledAircraft(next);
     } catch { /* silent */ }
     finally { setAcToggleLoading(false); }
+  };
+
+  const saveActiveLogo = async (logoId) => {
+    try {
+      const snap = await getDoc(APP_SETTINGS_DOC);
+      const curr = snap.exists() ? snap.data() : {};
+      await setDoc(APP_SETTINGS_DOC, { ...curr, activeLogo: logoId });
+      setActiveLogo(logoId);
+      // Update the page icon immediately for new installs
+      const logo = LOGOS.find(l => l.id === logoId);
+      if (logo) {
+        const link = document.querySelector("link[rel='apple-touch-icon']");
+        if (link) link.href = logo.src;
+        const icon = document.querySelector("link[rel='icon']");
+        if (icon) icon.href = logo.src;
+      }
+    } catch { /* silent */ }
   };
 
   /** Change current user's password */
@@ -2452,6 +2477,40 @@ function SettingsView({
                   </div>
                 </div>
               ))}
+
+              {/* App Logo Picker */}
+              <div style={{ background: c.card, border: `1px solid ${c.border}`, borderRadius: 14, padding: 14, marginBottom: 8 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: c.text, marginBottom: 4 }}>🖼 App 圖示 Logo</div>
+                <div style={{ fontSize: 11, color: c.sub, marginBottom: 12, lineHeight: 1.5 }}>
+                  Changes the in-app logo instantly for all users. For home screen icon, users need to reinstall the PWA after you change this.
+                </div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  {LOGOS.map(logo => {
+                    const selected = (activeLogo || "logo") === logo.id;
+                    return (
+                      <button
+                        key={logo.id}
+                        onClick={() => saveActiveLogo(logo.id)}
+                        style={{
+                          display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+                          padding: 10, borderRadius: 14, border: `2px solid ${selected ? c.accent : c.border}`,
+                          background: selected ? `${c.accent}18` : c.pill,
+                          cursor: "pointer", transition: "all 0.15s",
+                        }}
+                      >
+                        <img src={logo.src} alt={logo.label} style={{ width: 52, height: 52, objectFit: "contain", borderRadius: 12 }} />
+                        <div style={{ fontSize: 10, fontWeight: 700, color: selected ? c.accent : c.sub, letterSpacing: 1 }}>{logo.label}</div>
+                        {selected && <div style={{ fontSize: 9, color: c.accent, fontWeight: 800, letterSpacing: 1 }}>✓ ACTIVE</div>}
+                      </button>
+                    );
+                  })}
+                </div>
+                {activeLogo && activeLogo !== "logo" && (
+                  <div style={{ marginTop: 10, fontSize: 11, color: c.sub, lineHeight: 1.5, padding: "8px 10px", background: `${c.accent}10`, borderRadius: 8 }}>
+                    💡 Tip: Ask pilots to reinstall the app from their browser to update the home screen icon.
+                  </div>
+                )}
+              </div>
 
               {/* Aircraft Fleet Toggle */}
               <div style={{ background: c.card, border: `1px solid ${c.border}`, borderRadius: 14, padding: 14, marginBottom: 8 }}>
@@ -3384,6 +3443,7 @@ export default function App() {
   const [appShowAcStats,    setAppShowAcStats]    = useState(true);  // fetched from Firestore
   const [appShowRouteStats, setAppShowRouteStats] = useState(true);  // fetched from Firestore
   const [enabledAircraft,   setEnabledAircraft]   = useState(DEFAULT_ENABLED_AIRCRAFT); // fetched from Firestore
+  const [activeLogo,        setActiveLogo]        = useState("logo");  // fetched from Firestore
   // forgot-password flow
   const [forgotUser,      setForgotUser]      = useState("");
   const [forgotErr,       setForgotErr]       = useState("");
@@ -3478,6 +3538,17 @@ export default function App() {
         setAppShowAcStats(s.showAcStats    !== false);
         setAppShowRouteStats(s.showRouteStats !== false);
         if (Array.isArray(s.enabledAircraft)) setEnabledAircraft(s.enabledAircraft);
+        if (s.activeLogo) {
+          setActiveLogo(s.activeLogo);
+          // Dynamically update apple-touch-icon so new installs pick up the right icon
+          const logo = LOGOS.find(l => l.id === s.activeLogo);
+          if (logo) {
+            const link = document.querySelector("link[rel='apple-touch-icon']");
+            if (link) link.href = logo.src;
+            const icon = document.querySelector("link[rel='icon']");
+            if (icon) icon.href = logo.src;
+          }
+        }
       }
     }).catch(() => {});
     if (layer1 === "ok" && layer2 === "ok" && saved) { setUsername(saved); setAuthStep("app"); }
@@ -4048,7 +4119,7 @@ export default function App() {
       <div style={{ width: "100%", maxWidth: 360 }}>
         {/* Logo + branding */}
         <div style={{ textAlign: "center", marginBottom: 40 }}>
-          <img src="/logo.png" alt="FlightLog" style={{ width: 80, height: 80, objectFit: "contain", marginBottom: 12, borderRadius: 18 }} />
+          <img src={LOGOS.find(l => l.id === activeLogo)?.src || "/logo.png"} alt="FlightLog" style={{ width: 80, height: 80, objectFit: "contain", marginBottom: 12, borderRadius: 18 }} />
           <div style={{ fontSize: 9, letterSpacing: 5, color: c.accent, fontWeight: 700, marginBottom: 6 }}>FLIGHT LOG</div>
           <div style={{ fontSize: 26, fontWeight: 800, color: c.text, lineHeight: 1.2 }}>我的空中日記</div>
           <div style={{ fontSize: 13, color: c.sub, marginTop: 8 }}>Enter crew passcode to continue</div>
@@ -4089,7 +4160,7 @@ export default function App() {
       <style>{gs}</style>
       <div style={{ width: "100%", maxWidth: 360 }}>
         <div style={{ textAlign: "center", marginBottom: 40 }}>
-          <img src="/logo.png" alt="FlightLog" style={{ width: 80, height: 80, objectFit: "contain", marginBottom: 12, borderRadius: 18 }} />
+          <img src={LOGOS.find(l => l.id === activeLogo)?.src || "/logo.png"} alt="FlightLog" style={{ width: 80, height: 80, objectFit: "contain", marginBottom: 12, borderRadius: 18 }} />
           <div style={{ fontSize: 9, letterSpacing: 5, color: c.accent, fontWeight: 700, marginBottom: 6 }}>FLIGHT LOG</div>
           <div style={{ fontSize: 26, fontWeight: 800, color: c.text, lineHeight: 1.2 }}>我的空中日記</div>
           <div style={{ fontSize: 13, color: c.sub, marginTop: 8 }}>Sign in to your personal account</div>
@@ -4177,7 +4248,7 @@ export default function App() {
       <style>{gs}</style>
       <div style={{ width: "100%", maxWidth: 360 }}>
         <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <img src="/logo.png" alt="FlightLog" style={{ width: 72, height: 72, objectFit: "contain", marginBottom: 12, borderRadius: 16 }} />
+          <img src={LOGOS.find(l => l.id === activeLogo)?.src || "/logo.png"} alt="FlightLog" style={{ width: 72, height: 72, objectFit: "contain", marginBottom: 12, borderRadius: 16 }} />
           <div style={{ fontSize: 22, fontWeight: 800, color: c.text }}>建立帳號</div>
           <div style={{ fontSize: 13, color: c.sub, marginTop: 8, lineHeight: 1.6 }}>
             Create your personal FlightLog account.<br />
@@ -5047,6 +5118,8 @@ export default function App() {
             flights={flights}
             enabledAircraft={enabledAircraft}
             setEnabledAircraft={setEnabledAircraft}
+            activeLogo={activeLogo}
+            saveActiveLogo={saveActiveLogo}
           />
         )}
 
