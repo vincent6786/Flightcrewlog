@@ -49,6 +49,9 @@ const DEFAULT_ENABLED_AIRCRAFT = ["B777", "B787", "A321", "A330"];
 /** Selectable pilot positions (short code). */
 const POSITIONS = ["Capt", "SFO", "FO", "CP", "IP", "Check"];
 
+/** Cabin positions (shown only when showCabinPositions is enabled by admin). */
+const CABIN_POSITIONS = ["Chief Purser", "DP"];
+
 /**
  * Human-readable labels for each pilot position.
  * Capt  = 機長         (Captain)
@@ -57,18 +60,37 @@ const POSITIONS = ["Capt", "SFO", "FO", "CP", "IP", "Check"];
  * CP    = 總機長        (Chief Pilot)
  * IP    = 教師機師      (Instructed Pilot)
  * Check = 考核機長      (Check Pilot)
+ * Chief Purser = 事務長 (Chief Purser)
+ * DP    = 副事務長      (Deputy Purser)
  */
 const POSITION_LABELS = {
-  Capt:  "Capt 機長",
-  SFO:   "SFO 資深副機長",
-  FO:    "FO 副機長",
-  CP:    "CP 總機長",
-  IP:    "IP 教師機師",
-  Check: "Check 考核機長",
+  Capt:          "Capt 機長",
+  SFO:           "SFO 資深副機長",
+  FO:            "FO 副機長",
+  CP:            "CP 總機長",
+  IP:            "IP 教師機師",
+  Check:         "Check 考核機長",
+  "Chief Purser":"CP 事務長",
+  DP:            "DP 副事務長",
 };
 
 /** Pilot Flying / Monitoring roles for each flight leg. */
 const PILOT_ROLES = ["PF", "PM", "Observer"];
+
+/** Teacher institutions. */
+const INSTITUTIONS = ["EVAAIR HQ", "EVA FTA"];
+
+/** Default ground school subjects (admin can add/remove/toggle). */
+const DEFAULT_SUBJECTS = [
+  "Electrical System",
+  "Radio Nav",
+  "General Nav",
+  "Meteorology",
+  "Airframe",
+  "Engine",
+  "Principle of Flight",
+  "Performance",
+];
 
 /** Available logo options (files must exist in /public/) */
 const LOGOS = [
@@ -1736,6 +1758,8 @@ function SettingsView({
   customTags, setCustomTags, onImport, routes, setRoutes, flights,
   enabledAircraft, setEnabledAircraft,
   activeLogo, saveActiveLogo,
+  showCabinPositions, saveCabinPositions,
+  enabledSubjects, customSubjects, saveSubjectSettings,
 }) {
   const dark = themeKey?.endsWith("Dark") ?? true;
   const [newTag,       setNewTag]       = useState("");
@@ -1776,6 +1800,8 @@ function SettingsView({
   const [showRouteStats,   setShowRouteStats]   = useState(true);    // top routes visible
   const [statsToggleLoading, setStatsToggleLoading] = useState(false);
   const [acToggleLoading,    setAcToggleLoading]    = useState(false);
+  const [newSubjectInput,    setNewSubjectInput]    = useState("");
+  const [subjectErr,         setSubjectErr]         = useState("");
 
   const isAdmin = username === "adminsetup";
 
@@ -1900,7 +1926,6 @@ function SettingsView({
       const curr = snap.exists() ? snap.data() : {};
       await setDoc(APP_SETTINGS_DOC, { ...curr, activeLogo: logoId });
       setActiveLogo(logoId);
-      // Update the page icon immediately for new installs
       const logo = LOGOS.find(l => l.id === logoId);
       if (logo) {
         const link = document.querySelector("link[rel='apple-touch-icon']");
@@ -1908,6 +1933,25 @@ function SettingsView({
         const icon = document.querySelector("link[rel='icon']");
         if (icon) icon.href = logo.src;
       }
+    } catch { /* silent */ }
+  };
+
+  const saveCabinPositions = async (val) => {
+    try {
+      const snap = await getDoc(APP_SETTINGS_DOC);
+      const curr = snap.exists() ? snap.data() : {};
+      await setDoc(APP_SETTINGS_DOC, { ...curr, showCabinPositions: val });
+      setShowCabinPositions(val);
+    } catch { /* silent */ }
+  };
+
+  const saveSubjectSettings = async (enabled, custom) => {
+    try {
+      const snap = await getDoc(APP_SETTINGS_DOC);
+      const curr = snap.exists() ? snap.data() : {};
+      await setDoc(APP_SETTINGS_DOC, { ...curr, enabledSubjects: enabled, customSubjects: custom });
+      setEnabledSubjects(enabled);
+      setCustomSubjects(custom);
     } catch { /* silent */ }
   };
 
@@ -2174,7 +2218,7 @@ function SettingsView({
               >
                 無 None
               </button>
-              {POSITIONS.map(p => (
+              {[...POSITIONS, ...(showCabinPositions ? CABIN_POSITIONS : [])].map(p => (
                 <button
                   key={p}
                   onClick={() => setDefaultPosition(defaultPosition === p ? "" : p)}
@@ -2512,6 +2556,86 @@ function SettingsView({
                 )}
               </div>
 
+              {/* Cabin Positions Toggle */}
+              <div style={{ background: c.card, border: `1px solid ${c.border}`, borderRadius: 14, padding: 14, marginBottom: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: c.text }}>👔 艙務長職位 Cabin Positions</div>
+                    <div style={{ fontSize: 11, color: c.sub, marginTop: 3, lineHeight: 1.5 }}>
+                      Show Chief Purser (事務長) &amp; Deputy Purser (副事務長) as selectable positions in flight logs.
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => saveCabinPositions(!showCabinPositions)}
+                    style={{ width: 52, height: 30, borderRadius: 15, border: "none", cursor: "pointer", background: showCabinPositions ? c.accent : c.pill, position: "relative", flexShrink: 0, marginLeft: 12, transition: "background 0.2s" }}
+                  >
+                    <div style={{ position: "absolute", top: 3, left: showCabinPositions ? 25 : 3, width: 24, height: 24, borderRadius: "50%", background: showCabinPositions ? c.adk : c.sub, transition: "left 0.2s" }} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Ground School Subjects */}
+              <div style={{ background: c.card, border: `1px solid ${c.border}`, borderRadius: 14, padding: 14, marginBottom: 8 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: c.text, marginBottom: 4 }}>📚 地面學科 Ground School Subjects</div>
+                <div style={{ fontSize: 11, color: c.sub, marginBottom: 12, lineHeight: 1.5 }}>
+                  Manage which subjects appear on teacher profiles. Toggle to show/hide; add custom subjects as needed.
+                </div>
+                {/* Subject toggles */}
+                {[...DEFAULT_SUBJECTS, ...customSubjects].map(subj => {
+                  const on = enabledSubjects.includes(subj);
+                  const isCustom = customSubjects.includes(subj);
+                  return (
+                    <div key={subj} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingBottom: 9, marginBottom: 9, borderBottom: `1px solid ${c.border}` }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <div style={{ fontSize: 13, color: c.text, fontWeight: 600 }}>{subj}</div>
+                        {isCustom && <div style={{ fontSize: 9, color: c.accent, fontWeight: 700, letterSpacing: 1, background: `${c.accent}18`, borderRadius: 4, padding: "1px 5px" }}>CUSTOM</div>}
+                      </div>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        {isCustom && (
+                          <button onClick={() => {
+                            const newCustom = customSubjects.filter(s => s !== subj);
+                            const newEnabled = enabledSubjects.filter(s => s !== subj);
+                            saveSubjectSettings(newEnabled, newCustom);
+                          }} style={{ fontSize: 11, color: "#FF453A", background: "none", border: "none", cursor: "pointer", padding: "2px 6px" }}>✕</button>
+                        )}
+                        <button
+                          onClick={() => {
+                            const newEnabled = on ? enabledSubjects.filter(s => s !== subj) : [...enabledSubjects, subj];
+                            saveSubjectSettings(newEnabled, customSubjects);
+                          }}
+                          style={{ width: 52, height: 30, borderRadius: 15, border: "none", cursor: "pointer", background: on ? c.accent : c.pill, position: "relative", flexShrink: 0, transition: "background 0.2s" }}
+                        >
+                          <div style={{ position: "absolute", top: 3, left: on ? 25 : 3, width: 24, height: 24, borderRadius: "50%", background: on ? c.adk : c.sub, transition: "left 0.2s" }} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+                {/* Add custom subject */}
+                <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                  <input
+                    value={newSubjectInput}
+                    onChange={e => { setNewSubjectInput(e.target.value.toUpperCase()); setSubjectErr(""); }}
+                    placeholder="Add custom subject..."
+                    style={{ flex: 1, background: c.pill, border: `1px solid ${c.border}`, borderRadius: 10, padding: "8px 12px", fontSize: 12, color: c.text, outline: "none", textTransform: "uppercase" }}
+                  />
+                  <button
+                    onClick={() => {
+                      const val = newSubjectInput.trim();
+                      if (!val) { setSubjectErr("Enter a subject name"); return; }
+                      const allSubjects = [...DEFAULT_SUBJECTS, ...customSubjects];
+                      if (allSubjects.find(s => s.toUpperCase() === val.toUpperCase())) { setSubjectErr("Already exists"); return; }
+                      const newCustom = [...customSubjects, val];
+                      const newEnabled = [...enabledSubjects, val];
+                      saveSubjectSettings(newEnabled, newCustom);
+                      setNewSubjectInput("");
+                    }}
+                    style={{ background: c.accent, color: c.adk, border: "none", borderRadius: 10, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                  >+ Add</button>
+                </div>
+                {subjectErr && <div style={{ fontSize: 11, color: "#FF453A", marginTop: 6 }}>{subjectErr}</div>}
+              </div>
+
               {/* Aircraft Fleet Toggle */}
               <div style={{ background: c.card, border: `1px solid ${c.border}`, borderRadius: 14, padding: 14, marginBottom: 8 }}>
                 <div style={{ fontSize: 14, fontWeight: 700, color: c.text, marginBottom: 4 }}>✈ 機隊管理 Fleet Management</div>
@@ -2691,7 +2815,7 @@ function SettingsView({
 // When editing (editFlightId set): status & tags fields are hidden.
 // When creating: status & tags are applied to the crew member object on save.
 // ═════════════════════════════════════════════════════════════════════════════
-function QuickLogView({ crew, routes, setRoutes, initialForm, editFlightId, onSave, onBack, c, allTags, activeAircraft }) {
+function QuickLogView({ crew, routes, setRoutes, initialForm, editFlightId, onSave, onBack, c, allTags, activeAircraft, showCabinPositions }) {
   const [form, setForm] = useState(initialForm);
   const [sugg, setSugg] = useState([]);   // crew search suggestions
   const [addR, setAddR] = useState(false); // show add-route panel
@@ -2917,7 +3041,7 @@ function QuickLogView({ crew, routes, setRoutes, initialForm, editFlightId, onSa
         {/* ── Position ── */}
         <Sect label="職位 POSITION" c={c}>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-            {POSITIONS.map(p => (
+            {[...POSITIONS, ...(showCabinPositions ? CABIN_POSITIONS : [])].map(p => (
               <button
                 key={p}
                 onClick={() => setForm(f => ({ ...f, position: f.position === p ? "" : p }))}
@@ -3444,6 +3568,9 @@ export default function App() {
   const [appShowRouteStats, setAppShowRouteStats] = useState(true);  // fetched from Firestore
   const [enabledAircraft,   setEnabledAircraft]   = useState(DEFAULT_ENABLED_AIRCRAFT); // fetched from Firestore
   const [activeLogo,        setActiveLogo]        = useState("logo");  // fetched from Firestore
+  const [showCabinPositions,setShowCabinPositions]= useState(false); // fetched from Firestore
+  const [enabledSubjects,   setEnabledSubjects]   = useState(DEFAULT_SUBJECTS); // fetched from Firestore
+  const [customSubjects,    setCustomSubjects]    = useState([]); // fetched from Firestore
   // forgot-password flow
   const [forgotUser,      setForgotUser]      = useState("");
   const [forgotErr,       setForgotErr]       = useState("");
@@ -3490,7 +3617,7 @@ export default function App() {
   const [sortMode,  setSortMode]  = useState("alpha"); // "alpha" | "recent"
 
   // ── §13.9  Profile inline edit state ──────────────────────────────────────
-  const [newCrew,        setNewCrew]        = useState({ id: "", name: "", nickname: "", seniority: "" });
+  const [newCrew,        setNewCrew]        = useState({ id: "", name: "", nickname: "", seniority: "", type: "pilot", institution: "EVAAIR HQ" });
   const [addCrewErr,     setAddCrewErr]     = useState("");
   const [editCrewInfo,   setEditCrewInfo]   = useState(false);
   const [tempCrewInfo,   setTempCrewInfo]   = useState({ name: "", nickname: "", seniority: "" });
@@ -3538,6 +3665,9 @@ export default function App() {
         setAppShowAcStats(s.showAcStats    !== false);
         setAppShowRouteStats(s.showRouteStats !== false);
         if (Array.isArray(s.enabledAircraft)) setEnabledAircraft(s.enabledAircraft);
+        if (s.showCabinPositions !== undefined) setShowCabinPositions(s.showCabinPositions === true);
+        if (Array.isArray(s.enabledSubjects))  setEnabledSubjects(s.enabledSubjects);
+        if (Array.isArray(s.customSubjects))   setCustomSubjects(s.customSubjects);
         if (s.activeLogo) {
           setActiveLogo(s.activeLogo);
           // Dynamically update apple-touch-icon so new installs pick up the right icon
@@ -4081,6 +4211,9 @@ export default function App() {
       return a.nickname.localeCompare(b.nickname, "ja");
     });
 
+  const filteredPilots   = filtered.filter(m => m.type !== "teacher");
+  const filteredTeachers = filtered.filter(m => m.type === "teacher");
+
   /** Active profile crew member and their flight history. */
   const pMember  = crew.find(m => m.id === profileId);
   const pFlights = flights.filter(f => f.crewId === profileId).sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -4585,12 +4718,12 @@ export default function App() {
           </div>
         )}
 
-        {/* All Crew list */}
+        {/* All Pilots list */}
         <div style={{ fontSize: 9, letterSpacing: 3, color: c.sub, fontWeight: 700, marginBottom: 10 }}>
-          全部組員 ALL CREW ({filtered.length})
+          全部機師 ALL PILOTS ({filteredPilots.length})
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {filtered.map(m => {
+          {filteredPilots.map(m => {
             const si        = m.status ? STATUS_MAP[m.status] : null;
             const last      = flights.filter(f => f.crewId === m.id).sort((a, b) => new Date(b.date) - new Date(a.date))[0];
             const memoMatch = search.length > 1 && flights.filter(f => f.crewId === m.id).some(f => (f.memo || "").toLowerCase().includes(search.toLowerCase()));
@@ -4639,16 +4772,97 @@ export default function App() {
           })}
         </div>
 
+        {/* Teachers section */}
+        {filteredTeachers.length > 0 && (
+          <div style={{ marginTop: 24 }}>
+            <div style={{ fontSize: 9, letterSpacing: 3, color: c.sub, fontWeight: 700, marginBottom: 10 }}>
+              地面教官 TEACHERS ({filteredTeachers.length})
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {filteredTeachers.map(m => {
+                const si = m.status ? STATUS_MAP[m.status] : null;
+                return (
+                  <div
+                    key={m.id}
+                    onClick={() => goProfile(m.id)}
+                    style={{
+                      background:   si ? si.bg : c.card,
+                      border:       `1px solid ${si ? si.border : c.border}`,
+                      borderRadius: 14, padding: "12px 14px",
+                      cursor:       "pointer", display: "flex", alignItems: "center", gap: 12,
+                    }}
+                  >
+                    <Dot status={m.status} sz={12} c={c} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+                        <span style={{ fontWeight: 800, fontSize: 16, color: c.text }}>{m.nickname}</span>
+                        <span style={{ fontSize: 9, color: c.accent, fontWeight: 800, letterSpacing: 1, background: `${c.accent}18`, borderRadius: 5, padding: "2px 6px" }}>教官</span>
+                        <span style={{ fontSize: 10, color: c.sub, marginLeft: "auto", flexShrink: 0 }}>{m.institution || ""}</span>
+                      </div>
+                      <div style={{ fontSize: 11, color: c.sub }}>{m.name} · #{m.id}</div>
+                      {m.tags.length > 0 && (
+                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
+                          {m.tags.map(t => (
+                            <span key={t} style={{ background: c.pill, color: c.sub, borderRadius: 10, padding: "2px 7px", fontSize: 10, fontWeight: 600 }}>{t}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Add new crew form */}
         <div style={{ marginTop: 24, background: c.card, border: `1px dashed ${c.border}`, borderRadius: 16, padding: 16 }}>
-          <div style={{ fontSize: 10, letterSpacing: 3, color: c.accent, fontWeight: 700, marginBottom: 4 }}>新增機師 ADD PILOT</div>
+          <div style={{ fontSize: 10, letterSpacing: 3, color: c.accent, fontWeight: 700, marginBottom: 4 }}>新增成員 ADD MEMBER</div>
           <div style={{ fontSize: 10, color: c.sub, marginBottom: 12 }}>⚠ Shared with all pilots</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
-            <ClearableInput value={newCrew.id}        onChange={e => setNewCrew(n => ({ ...n, id:        e.target.value }))} placeholder="員工 ID *"        autoComplete="off" style={{ ...inp, fontSize: 13, padding: "9px 12px" }} c={c} />
-            <ClearableInput value={newCrew.nickname}  onChange={e => setNewCrew(n => ({ ...n, nickname:  e.target.value }))} placeholder="Eng Name *"                     autoComplete="off" style={{ ...inp, fontSize: 13, padding: "9px 12px" }} c={c} />
-            <ClearableInput value={newCrew.name}      onChange={e => setNewCrew(n => ({ ...n, name:      e.target.value }))} placeholder="Full Name 姓名"                autoComplete="off" style={{ ...inp, fontSize: 13, padding: "9px 12px" }} c={c} />
-            <ClearableInput value={newCrew.seniority} onChange={e => setNewCrew(n => ({ ...n, seniority: e.target.value }))} placeholder="Class 83 / Airline / Direct" autoComplete="off" style={{ ...inp, fontSize: 13, padding: "9px 12px" }} c={c} />
+
+          {/* Type selector */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+            {[{ id: "pilot", label: "✈ Pilot 機師" }, { id: "teacher", label: "📚 Teacher 教官" }].map(t => (
+              <button key={t.id} onClick={() => setNewCrew(n => ({ ...n, type: t.id }))}
+                style={{ flex: 1, padding: "7px 0", borderRadius: 10, border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer",
+                  background: newCrew.type === t.id ? c.accent : c.pill,
+                  color:      newCrew.type === t.id ? c.adk    : c.sub }}>{t.label}</button>
+            ))}
           </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+            <ClearableInput value={newCrew.id}       onChange={e => setNewCrew(n => ({ ...n, id:       e.target.value.toUpperCase() }))} placeholder="員工 ID *"    autoComplete="off" style={{ ...inp, fontSize: 13, padding: "9px 12px", textTransform: "uppercase" }} c={c} />
+            <ClearableInput value={newCrew.nickname} onChange={e => setNewCrew(n => ({ ...n, nickname: e.target.value.toUpperCase() }))} placeholder="Eng Name *"   autoComplete="off" style={{ ...inp, fontSize: 13, padding: "9px 12px", textTransform: "uppercase" }} c={c} />
+            <ClearableInput value={newCrew.name}     onChange={e => setNewCrew(n => ({ ...n, name:     e.target.value.toUpperCase() }))} placeholder="Full Name 姓名" autoComplete="off" style={{ ...inp, fontSize: 13, padding: "9px 12px", textTransform: "uppercase" }} c={c} />
+            <ClearableInput
+              value={newCrew.seniority}
+              onChange={e => setNewCrew(n => ({ ...n, seniority: e.target.value.toUpperCase() }))}
+              onBlur={e => {
+                const v = e.target.value.trim();
+                if (/^\d{1,3}$/.test(v)) setNewCrew(n => ({ ...n, seniority: `CLASS ${v}` }));
+              }}
+              placeholder={newCrew.type === "teacher" ? "Staff ID / Class" : "CLASS"}
+              autoComplete="off"
+              style={{ ...inp, fontSize: 13, padding: "9px 12px", textTransform: "uppercase" }}
+              c={c}
+            />
+          </div>
+
+          {/* Teacher-only: institution + subjects */}
+          {newCrew.type === "teacher" && (
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 11, color: c.sub, fontWeight: 700, marginBottom: 6, letterSpacing: 1 }}>INSTITUTION</div>
+              <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+                {INSTITUTIONS.map(inst => (
+                  <button key={inst} onClick={() => setNewCrew(n => ({ ...n, institution: inst }))}
+                    style={{ flex: 1, padding: "7px 0", borderRadius: 10, border: "none", fontSize: 11, fontWeight: 700, cursor: "pointer",
+                      background: newCrew.institution === inst ? c.accent : c.pill,
+                      color:      newCrew.institution === inst ? c.adk    : c.sub }}>{inst}</button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {addCrewErr && <div style={{ color: "#FF453A", fontSize: 12, marginBottom: 8 }}>{addCrewErr}</div>}
           <button
             onClick={() => {
@@ -4657,16 +4871,21 @@ export default function App() {
               if (crew.find(m => m.id === newCrew.id.trim()))     { setAddCrewErr("此 ID 已存在"); return; }
               const dupNick = crew.find(m => m.nickname.toLowerCase() === newCrew.nickname.trim().toLowerCase());
               if (dupNick) { setAddCrewErr(`"${newCrew.nickname}" 已有同名機師 (${dupNick.name} · ${dupNick.seniority})`); return; }
+              // Auto-format CLASS if pure digits
+              let sen = newCrew.seniority.trim();
+              if (/^\d{1,3}$/.test(sen)) sen = `CLASS ${sen}`;
               setCrew(cr => [...cr, {
-                id:        newCrew.id.trim(),
-                name:      newCrew.name.trim(),
-                nickname:  newCrew.nickname.trim(),
-                seniority: newCrew.seniority.trim(),
-                status:    null,
-                tags:      [],
-                notes:     "",
+                id:          newCrew.id.trim(),
+                name:        newCrew.name.trim(),
+                nickname:    newCrew.nickname.trim(),
+                seniority:   sen,
+                type:        newCrew.type || "pilot",
+                institution: newCrew.type === "teacher" ? newCrew.institution : undefined,
+                status:      null,
+                tags:        [],
+                notes:       "",
               }]);
-              setNewCrew({ id: "", name: "", nickname: "", seniority: "" });
+              setNewCrew({ id: "", name: "", nickname: "", seniority: "", type: "pilot", institution: "EVAAIR HQ" });
             }}
             style={{ width: "100%", background: c.accent, color: c.adk, border: "none", borderRadius: 12, padding: "10px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
           >
@@ -4807,10 +5026,17 @@ export default function App() {
               {m.nickname[0]}
             </div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 22, fontWeight: 800, color: c.text, lineHeight: 1.1 }}>{m.nickname}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ fontSize: 22, fontWeight: 800, color: c.text, lineHeight: 1.1 }}>{m.nickname}</div>
+                {m.type === "teacher" && (
+                  <span style={{ fontSize: 9, color: c.accent, fontWeight: 800, letterSpacing: 1, background: `${c.accent}18`, borderRadius: 5, padding: "2px 7px" }}>教官</span>
+                )}
+              </div>
               <div style={{ fontSize: 14, color: c.sub }}>{m.name}</div>
               <div style={{ fontSize: 11, color: c.accent, fontWeight: 700, marginTop: 2 }}>
-                {m.seniority} · #{m.id} · {pFlights.length} 次同飛 (我的)
+                {m.type === "teacher"
+                  ? `${m.institution || ""}  · #${m.id}`
+                  : `${m.seniority} · #${m.id} · ${pFlights.length} 次同飛 (我的)`}
               </div>
             </div>
           </div>
@@ -4860,14 +5086,55 @@ export default function App() {
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <ClearableInput value={tempCrewInfo.nickname}  onChange={e => setTempCrewInfo(t => ({ ...t, nickname:  e.target.value }))} placeholder="Nickname *"   autoComplete="off" style={{ ...inp, borderRadius: 12, padding: "10px 14px" }} c={c} />
                 <ClearableInput value={tempCrewInfo.name}      onChange={e => setTempCrewInfo(t => ({ ...t, name:      e.target.value }))} placeholder="姓名"          autoComplete="off" style={{ ...inp, borderRadius: 12, padding: "10px 14px" }} c={c} />
-                <ClearableInput value={tempCrewInfo.seniority} onChange={e => setTempCrewInfo(t => ({ ...t, seniority: e.target.value }))} placeholder="Class 83 / Airline / Direct" autoComplete="off" style={{ ...inp, borderRadius: 12, padding: "10px 14px" }} c={c} />
+                {m.type !== "teacher" && (
+                  <ClearableInput
+                    value={tempCrewInfo.seniority}
+                    onChange={e => setTempCrewInfo(t => ({ ...t, seniority: e.target.value.toUpperCase() }))}
+                    onBlur={e => {
+                      const v = e.target.value.trim();
+                      if (/^\d{1,3}$/.test(v)) setTempCrewInfo(t => ({ ...t, seniority: `CLASS ${v}` }));
+                    }}
+                    placeholder="CLASS"
+                    autoComplete="off"
+                    style={{ ...inp, borderRadius: 12, padding: "10px 14px", textTransform: "uppercase" }}
+                    c={c}
+                  />
+                )}
               </div>
             ) : (
               <div style={{ background: c.cardAlt, border: `1px solid ${c.border}`, borderRadius: 12, padding: "10px 14px", fontSize: 13, color: c.sub, lineHeight: 1.8 }}>
                 <span style={{ color: c.text, fontWeight: 700 }}>{m.nickname}</span> · {m.name}<br />
-                受訓期 {m.seniority} · #{m.id}
+                {m.type === "teacher"
+                  ? <span>{m.institution || "—"} · #{m.id}</span>
+                  : <span>受訓期 {m.seniority} · #{m.id}</span>}
               </div>
             )}
+          </div>
+
+          {/* Subjects (teacher only) */}
+          {m.type === "teacher" && enabledSubjects.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 9, letterSpacing: 3, color: c.sub, fontWeight: 700, marginBottom: 8 }}>科目 SUBJECTS</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {enabledSubjects.map(subj => (
+                  <button
+                    key={subj}
+                    onClick={() => {
+                      const tags = m.tags || [];
+                      const next = tags.includes(subj) ? tags.filter(t => t !== subj) : [...tags, subj];
+                      patchCrew(m.id, { tags: next });
+                    }}
+                    style={{
+                      background: (m.tags || []).includes(subj) ? c.accent : c.pill,
+                      color:      (m.tags || []).includes(subj) ? c.adk    : c.sub,
+                      border: "none", borderRadius: 20, padding: "6px 12px",
+                      fontSize: 12, fontWeight: 700, cursor: "pointer",
+                    }}
+                  >{subj}</button>
+                ))}
+              </div>
+            </div>
+          )}
           </div>
 
           {/* Tags (shared) */}
@@ -5048,6 +5315,7 @@ export default function App() {
             profileId={profileId}
             allTags={allTags}
             activeAircraft={enabledAircraft}
+            showCabinPositions={showCabinPositions}
           />
         )}
 
@@ -5120,6 +5388,11 @@ export default function App() {
             setEnabledAircraft={setEnabledAircraft}
             activeLogo={activeLogo}
             saveActiveLogo={saveActiveLogo}
+            showCabinPositions={showCabinPositions}
+            saveCabinPositions={saveCabinPositions}
+            enabledSubjects={enabledSubjects}
+            customSubjects={customSubjects}
+            saveSubjectSettings={saveSubjectSettings}
           />
         )}
 
