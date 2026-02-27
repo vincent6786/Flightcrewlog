@@ -1757,9 +1757,10 @@ function SettingsView({
   defaultAircraft, setDefaultAircraft, defaultPosition, setDefaultPosition,
   customTags, setCustomTags, onImport, routes, setRoutes, flights,
   enabledAircraft, setEnabledAircraft,
-  activeLogo, saveActiveLogo,
-  showCabinPositions, saveCabinPositions,
-  enabledSubjects, customSubjects, saveSubjectSettings,
+  activeLogo,        setActiveLogo,
+  showCabinPositions,setShowCabinPositions,
+  enabledSubjects,   setEnabledSubjects,
+  customSubjects,    setCustomSubjects,
 }) {
   const dark = themeKey?.endsWith("Dark") ?? true;
   const [newTag,       setNewTag]       = useState("");
@@ -5387,12 +5388,13 @@ export default function App() {
             enabledAircraft={enabledAircraft}
             setEnabledAircraft={setEnabledAircraft}
             activeLogo={activeLogo}
-            saveActiveLogo={saveActiveLogo}
+            setActiveLogo={setActiveLogo}
             showCabinPositions={showCabinPositions}
-            saveCabinPositions={saveCabinPositions}
+            setShowCabinPositions={setShowCabinPositions}
             enabledSubjects={enabledSubjects}
+            setEnabledSubjects={setEnabledSubjects}
             customSubjects={customSubjects}
-            saveSubjectSettings={saveSubjectSettings}
+            setCustomSubjects={setCustomSubjects}
           />
         )}
 
