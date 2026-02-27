@@ -4814,7 +4814,6 @@ export default function App() {
               </div>
             )}
           </div>
-          </div>
 
           {/* Tags (shared) */}
           <div style={{ marginBottom: 16 }}>
