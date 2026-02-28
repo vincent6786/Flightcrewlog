@@ -1,6 +1,6 @@
 // ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║                         CREWLOG  v2.0  —  App.jsx  (EVA Air Edition)      ║
-// ║              我的天空日記  ·  Your Private Cabin Crew Companion             ║
+// ║                       FLIGHTLOG  v2.0  —  App.jsx  (EVA Air Edition)      ║
+// ║              我的空中日記  ·  Your Private Flight Crew Companion            ║
 // ╠══════════════════════════════════════════════════════════════════════════════╣
 // ║  Stack : React 18 (hooks) · Firebase Firestore · Inline styles             ║
 // ║  Auth  : Passcode gate + localStorage username (no Firebase Auth)           ║
@@ -38,14 +38,47 @@ const OTP_EXPIRY_MS = 15 * 60 * 1000;
 /** Built-in tags (shown for all users, cannot be deleted). */
 const PRESET_TAGS = [
   "#Standard & SOP",
-  // "#好笑", "#專業", "#八卦", "#準時",
 ];
 
-/** Selectable aircraft types. */
-const AIRCRAFT = ["B777", "B787", "A321", "A330"];
+/** All aircraft types known to the system (admin can enable/disable). */
+const ALL_AIRCRAFT = ["B777", "B787", "A321", "A330", "A350", "A321neo"];
 
-/** Selectable cabin positions. */
-const POSITIONS = ["CP", "DP", "AP", "CA", "TA"];
+/** Default enabled aircraft (current EVA fleet — A350 & A321neo not yet active). */
+const DEFAULT_ENABLED_AIRCRAFT = ["B777", "B787", "A321", "A330"];
+
+/** Selectable pilot positions (short code). */
+const POSITIONS = ["Capt", "SFO", "FO", "CP", "IP", "Check"];
+
+
+
+/**
+ * Human-readable labels for each pilot position.
+ * Capt  = 機長         (Captain)
+ * SFO   = 資深副機長    (Senior First Officer / Cruise Pilot)
+ * FO    = 副機長        (First Officer)
+ * CP    = 總機長        (Chief Pilot)
+ * IP    = 教師機師      (Instructed Pilot)
+ * Check = 考核機長      (Check Pilot)
+ * Chief Purser = 事務長 (Chief Purser)
+ * DP    = 副事務長      (Deputy Purser)
+ */
+const POSITION_LABELS = {
+  Capt:          "Capt 機長",
+  SFO:           "SFO 資深副機長",
+  FO:            "FO 副機長",
+  CP:            "CP 總機長",
+  IP:            "IP 教師機師",
+  Check:         "Check 考核機長",
+};
+
+/** Pilot Flying / Monitoring roles for each flight leg. */
+const PILOT_ROLES = ["PF", "PM", "Observer"];
+
+
+
+
+
+
 
 /**
  * Status light definitions.
@@ -69,30 +102,32 @@ const mkId = () => Date.now().toString(36) + Math.random().toString(36).slice(2,
 const today = () => new Date().toISOString().slice(0, 10);
 
 /**
- * Formats a timestamp into a human-readable "time ago" string.
- * @param {number|string} timestamp - Unix timestamp or ISO date string
- * @returns {string} - Formatted time string (e.g., "just now", "15m ago", "3h ago", "2d ago", "15 Feb 14:30")
+ * Formats a timestamp as a relative time string.
+ * Returns:
+ *  - "just now" for < 1 minute
+ *  - "Xm ago" for < 1 hour
+ *  - "Xh ago" for < 24 hours
+ *  - "Xd ago" for < 7 days
+ *  - "DD MMM HH:mm" for older timestamps
  */
-const formatTimeAgo = (timestamp) => {
+const formatRelativeTime = (timestamp) => {
   if (!timestamp) return "—";
   const now = Date.now();
-  const then = typeof timestamp === "number" ? timestamp : new Date(timestamp).getTime();
-  const diff = now - then;
-  const seconds = Math.floor(diff / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-
-  if (seconds < 60) return "just now";
+  const diff = now - new Date(timestamp).getTime();
+  const minutes = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+  
+  if (minutes < 1) return "just now";
   if (minutes < 60) return `${minutes}m ago`;
   if (hours < 24) return `${hours}h ago`;
   if (days < 7) return `${days}d ago`;
-
-  // For dates older than 7 days, show "DD MMM HH:MM"
-  const date = new Date(then);
-  const day = date.getDate();
-  const month = date.toLocaleDateString("en-GB", { month: "short" });
-  const time = date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+  
+  // For older timestamps, show date + time
+  const d = new Date(timestamp);
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = d.toLocaleDateString('en-GB', { month: 'short' });
+  const time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   return `${day} ${month} ${time}`;
 };
 
@@ -785,11 +820,10 @@ const flightDoc = (username) => doc(db, "crewlog", `flights-${username}`);
     id:         string   — employee ID (unique primary key)
     nickname:   string   — English callsign / display name
     name:       string   — Chinese/Japanese full name
-    seniority:  string   — training batch e.g. "24G"
+    seniority:  string   — class / batch / origin e.g. "Class 83", "Ex-CAL", "Direct Entry"
     status:     "red" | "yellow" | "green" | null
     tags:       string[] — subset of allTags
     notes:      string   — long-form shared notes
-    votes:      object   — { [username]: { color: "red"|"yellow"|"green", timestamp: number } }
   }
 
   Flight log entry:
@@ -818,6 +852,9 @@ const EMPTY_FORM = {
   route:     "",
   aircraft:  "",
   position:  "",
+  role:      "",      // PF / PM / Observer
+  blockTime: "",      // e.g. "2:45" (block hours)
+  isSim:     false,   // simulator session flag
   memo:      "",
   status:    null,
   tags:      [],
@@ -1184,6 +1221,25 @@ function StatsView({ crew, flights, onBack, showAcStats, showRouteStats, c }) {
   });
   const months = Object.entries(monthCount).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 6);
 
+  // Total block hours (from private flights[] — all entries, not deduped)
+  const totalBlockMins = flights.reduce((acc, f) => {
+    if (!f.blockTime) return acc;
+    const parts = String(f.blockTime).split(":");
+    if (parts.length === 2) {
+      const h = parseInt(parts[0], 10) || 0;
+      const m = parseInt(parts[1], 10) || 0;
+      return acc + h * 60 + m;
+    }
+    return acc;
+  }, 0);
+  const blockHH = Math.floor(totalBlockMins / 60);
+  const blockMM = String(totalBlockMins % 60).padStart(2, "0");
+  const totalBlockStr = totalBlockMins > 0 ? `${blockHH}:${blockMM}` : "—";
+
+  // SIM vs line breakdown
+  const simCount  = flights.filter(f => f.isSim).length;
+  const lineCount = flights.filter(f => !f.isSim).length;
+
   // Crew status breakdown (counts crew members, not flights)
   const statusCount = { green: 0, yellow: 0, red: 0, none: 0 };
   crew.forEach(m => { statusCount[m.status || "none"]++; });
@@ -1242,10 +1298,16 @@ function StatsView({ crew, flights, onBack, showAcStats, showRouteStats, c }) {
       <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", padding: "16px 16px 100px", WebkitOverflowScrolling: "touch" }}>
 
         {/* Overview row */}
-        <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+        <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
           <StatCard icon="✈" value={totalFlights}       label="LOG ENTRIES" />
           <StatCard icon="🛫" value={uniqueFlights.length} label="FLIGHTS"   />
           <StatCard icon="🗺" value={uniqueRoutes}       label="ROUTES"      />
+        </div>
+        {/* Block hours + SIM row */}
+        <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+          <StatCard icon="⏱" value={totalBlockStr}  label="BLOCK HRS" />
+          <StatCard icon="✈" value={lineCount}       label="LINE"      />
+          <StatCard icon="🖥" value={simCount}        label="SIM"       />
         </div>
 
         {totalFlights === 0 ? (
@@ -1669,10 +1731,10 @@ function FontGalleryView({ onBack, fontKey, setFontKey, c }) {
                   marginBottom: 4,
                   lineHeight: 1.3
                 }}>
-                  CrewLog 我的天空日記
+                  FlightLog 我的空中日記
                 </div>
                 <div style={{ fontSize: 13, color: c.sub, lineHeight: 1.5 }}>
-                  Flight BR189 TPE→NRT 合飛組員紀錄
+                  Flight BR189 TPE→NRT 合飛機師紀錄
                 </div>
               </div>
             </button>
@@ -1705,6 +1767,7 @@ function SettingsView({
   onBack, c, themeKey, setThemeKey, fontKey, setFontKey, username, onLogout, onExport, onGoGuide, onGoStats, onGoThemes, onGoFonts,
   defaultAircraft, setDefaultAircraft, defaultPosition, setDefaultPosition,
   customTags, setCustomTags, onImport, routes, setRoutes, flights,
+  enabledAircraft, setEnabledAircraft,
 }) {
   const dark = themeKey?.endsWith("Dark") ?? true;
   const [newTag,       setNewTag]       = useState("");
@@ -1744,6 +1807,7 @@ function SettingsView({
   const [showAcStats,      setShowAcStats]      = useState(true);    // aircraft stats visible
   const [showRouteStats,   setShowRouteStats]   = useState(true);    // top routes visible
   const [statsToggleLoading, setStatsToggleLoading] = useState(false);
+  const [acToggleLoading,    setAcToggleLoading]    = useState(false);
 
   const isAdmin = username === "adminsetup";
 
@@ -1846,6 +1910,22 @@ function SettingsView({
     } catch { /* silent */ }
     finally { setStatsToggleLoading(false); }
   };
+
+  /** Toggle an aircraft type on/off in Firestore (admin only) */
+  const toggleAircraftEnabled = async (ac) => {
+    setAcToggleLoading(true);
+    try {
+      const next = enabledAircraft.includes(ac)
+        ? enabledAircraft.filter(x => x !== ac)
+        : [...enabledAircraft, ac];
+      const snap = await getDoc(APP_SETTINGS_DOC);
+      const curr = snap.exists() ? snap.data() : {};
+      await setDoc(APP_SETTINGS_DOC, { ...curr, enabledAircraft: next });
+      setEnabledAircraft(next);
+    } catch { /* silent */ }
+    finally { setAcToggleLoading(false); }
+  };
+
 
   /** Change current user's password */
   const changePassword = async () => {
@@ -2074,7 +2154,7 @@ function SettingsView({
         {/* ── Quick Actions ── */}
         <Sect label="快速操作 QUICK ACTIONS" c={c}>
           <SettingsRow icon="📊" label="飛行統計 Stats"      sub="查看你的飛行數據摘要"  onClick={onGoStats} c={c} />
-          <SettingsRow icon="❓" label="使用說明 Guide"      sub="如何使用 CrewLog"      onClick={onGoGuide} c={c} />
+          <SettingsRow icon="❓" label="使用說明 Guide"      sub="如何使用 FlightLog"      onClick={onGoGuide} c={c} />
         </Sect>
 
         {/* ── Defaults ── */}
@@ -2082,18 +2162,18 @@ function SettingsView({
           {/* Default Aircraft */}
           <div style={{ background: c.card, border: `1px solid ${c.border}`, borderRadius: 14, padding: 14, marginBottom: 8 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: c.text, marginBottom: 8 }}>✈ 預設機型 Default Aircraft</div>
-            <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button
                 onClick={() => setDefaultAircraft("")}
                 style={{ background: !defaultAircraft ? c.accent : c.pill, color: !defaultAircraft ? c.adk : c.sub, border: "none", borderRadius: 10, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
               >
                 無 None
               </button>
-              {AIRCRAFT.map(a => (
+              {(enabledAircraft || DEFAULT_ENABLED_AIRCRAFT).map(a => (
                 <button
                   key={a}
                   onClick={() => setDefaultAircraft(defaultAircraft === a ? "" : a)}
-                  style={{ flex: 1, background: defaultAircraft === a ? c.accent : c.pill, color: defaultAircraft === a ? c.adk : c.sub, border: "none", borderRadius: 10, padding: "8px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+                  style={{ background: defaultAircraft === a ? c.accent : c.pill, color: defaultAircraft === a ? c.adk : c.sub, border: "none", borderRadius: 10, padding: "8px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
                 >
                   {a}
                 </button>
@@ -2102,7 +2182,7 @@ function SettingsView({
           </div>
           {/* Default Position */}
           <div style={{ background: c.card, border: `1px solid ${c.border}`, borderRadius: 14, padding: 14 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: c.text, marginBottom: 8 }}>💺 預設職位 Default Position</div>
+            <div style={{ fontSize: 12, fontWeight: 700, c: c.text, marginBottom: 8 }}>🛫 預設職位 Default Position</div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
               <button
                 onClick={() => setDefaultPosition("")}
@@ -2114,9 +2194,9 @@ function SettingsView({
                 <button
                   key={p}
                   onClick={() => setDefaultPosition(defaultPosition === p ? "" : p)}
-                  style={{ background: defaultPosition === p ? c.accent : c.pill, color: defaultPosition === p ? c.adk : c.sub, border: "none", borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                  style={{ background: defaultPosition === p ? c.accent : c.pill, color: defaultPosition === p ? c.adk : c.sub, border: "none", borderRadius: 8, padding: "6px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
                 >
-                  {p}
+                  {POSITION_LABELS[p] || p}
                 </button>
               ))}
             </div>
@@ -2413,6 +2493,34 @@ function SettingsView({
                   </div>
                 </div>
               ))}
+
+{/* Aircraft Fleet Toggle */}
+              <div style={{ background: c.card, border: `1px solid ${c.border}`, borderRadius: 14, padding: 14, marginBottom: 8 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: c.text, marginBottom: 4 }}>✈ 機隊管理 Fleet Management</div>
+                <div style={{ fontSize: 11, color: c.sub, marginBottom: 12, lineHeight: 1.5 }}>
+                  Toggle which aircraft types appear in the log form. Disable types not yet in your fleet (A350, A321neo).
+                </div>
+                {ALL_AIRCRAFT.map(ac => {
+                  const on = (enabledAircraft || DEFAULT_ENABLED_AIRCRAFT).includes(ac);
+                  return (
+                    <div key={ac} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingBottom: 10, marginBottom: 10, borderBottom: `1px solid ${c.border}` }}>
+                      <div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: c.text }}>{ac}</div>
+                        {(ac === "A350" || ac === "A321neo") && (
+                          <div style={{ fontSize: 10, color: "#FF453A", fontWeight: 600 }}>尚未入隊 Not in fleet yet</div>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => !acToggleLoading && toggleAircraftEnabled(ac)}
+                        disabled={acToggleLoading}
+                        style={{ width: 52, height: 30, borderRadius: 15, border: "none", cursor: acToggleLoading ? "default" : "pointer", background: on ? c.accent : c.pill, position: "relative", flexShrink: 0, transition: "background 0.2s" }}
+                      >
+                        <div style={{ position: "absolute", top: 3, left: on ? 25 : 3, width: 24, height: 24, borderRadius: "50%", background: on ? c.adk : c.sub, transition: "left 0.2s" }} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
             </Sect>
 
             {/* ── Activity Monitor ── */}
@@ -2437,7 +2545,7 @@ function SettingsView({
                     </div>
                     {Object.keys(accounts).map(u => {
                       const stat      = usageData[u] || {};
-                      const lastLogin = stat.lastLogin ? formatTimeAgo(stat.lastLogin) : "—";
+                      const lastLogin = formatRelativeTime(stat.lastLogin);
                       const flights   = stat.flightCount ?? "—";
                       const daysAgo   = stat.lastLogin
                         ? Math.floor((Date.now() - new Date(stat.lastLogin)) / 86400000)
@@ -2548,7 +2656,7 @@ function SettingsView({
 
         {/* About */}
         <div style={{ textAlign: "center", padding: "16px 0 4px", color: c.sub, fontSize: 11, lineHeight: 1.8 }}>
-          CrewLog v2.0 · EVA Air Edition · Built with ✈ & ❤<br />
+          FlightLog v2.0 · EVA Air Edition · Built with ✈ & ❤<br />
           <span style={{ color: c.accent, fontWeight: 700 }}>Your logs are safe & private.</span>
         </div>
       </div>
@@ -2563,7 +2671,7 @@ function SettingsView({
 // When editing (editFlightId set): status & tags fields are hidden.
 // When creating: status & tags are applied to the crew member object on save.
 // ═════════════════════════════════════════════════════════════════════════════
-function QuickLogView({ crew, routes, setRoutes, initialForm, editFlightId, onSave, onBack, c, allTags }) {
+function QuickLogView({ crew, routes, setRoutes, initialForm, editFlightId, onSave, onBack, c, allTags, activeAircraft }) {
   const [form, setForm] = useState(initialForm);
   const [sugg, setSugg] = useState([]);   // crew search suggestions
   const [addR, setAddR] = useState(false); // show add-route panel
@@ -2629,7 +2737,8 @@ function QuickLogView({ crew, routes, setRoutes, initialForm, editFlightId, onSa
     width:        "100%",
   };
 
-  const tagsToShow = allTags || PRESET_TAGS;
+  const tagsToShow     = allTags || PRESET_TAGS;
+  const aircraftToShow = activeAircraft || DEFAULT_ENABLED_AIRCRAFT;
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
@@ -2644,7 +2753,7 @@ function QuickLogView({ crew, routes, setRoutes, initialForm, editFlightId, onSa
       <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", padding: "16px 16px 100px", WebkitOverflowScrolling: "touch" }}>
 
         {/* ── Crew Search ── */}
-        <Sect label="組員 CREW MEMBER" c={c}>
+        <Sect label="機師 PILOT" c={c}>
           <div style={{ position: "relative" }}>
             <ClearableInput
               value={form.crewTxt}
@@ -2740,12 +2849,12 @@ function QuickLogView({ crew, routes, setRoutes, initialForm, editFlightId, onSa
               <div style={{ fontSize: 9, letterSpacing: 3, color: c.accent, fontWeight: 700, marginBottom: 8 }}>ADD ROUTE</div>
               <ClearableInput value={rf.num}   onChange={e => setRf(r => ({ ...r, num:   e.target.value }))} placeholder="航班號 e.g. CI001"    autoComplete="off" style={{ ...inp, marginBottom: 6, borderRadius: 10, padding: "8px 12px", fontSize: 13 }} c={c} />
               <ClearableInput value={rf.route} onChange={e => setRf(r => ({ ...r, route: e.target.value.toUpperCase() }))} placeholder="航線 e.g. TPE→NRT" autoComplete="off" style={{ ...inp, marginBottom: 6, borderRadius: 10, padding: "8px 12px", fontSize: 13 }} c={c} />
-              <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-                {AIRCRAFT.map(a => (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                {aircraftToShow.map(a => (
                   <button
                     key={a}
                     onClick={() => setRf(r => ({ ...r, ac: a }))}
-                    style={{ flex: 1, background: rf.ac === a ? c.accent : c.pill, color: rf.ac === a ? c.adk : c.sub, border: "none", borderRadius: 8, padding: "7px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                    style={{ background: rf.ac === a ? c.accent : c.pill, color: rf.ac === a ? c.adk : c.sub, border: "none", borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
                   >
                     {a}
                   </button>
@@ -2767,16 +2876,15 @@ function QuickLogView({ crew, routes, setRoutes, initialForm, editFlightId, onSa
 
         {/* ── Aircraft ── */}
         <Sect label="機型 AIRCRAFT" c={c}>
-          <div style={{ display: "flex", gap: 8 }}>
-            {AIRCRAFT.map(a => (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {aircraftToShow.map(a => (
               <button
                 key={a}
                 onClick={() => setForm(f => ({ ...f, aircraft: f.aircraft === a ? "" : a }))}
                 style={{
-                  flex:         1,
                   background:   form.aircraft === a ? c.accent : c.pill,
                   color:        form.aircraft === a ? c.adk    : c.sub,
-                  border:       "none", borderRadius: 12, padding: "11px",
+                  border:       "none", borderRadius: 12, padding: "11px 16px",
                   fontSize:     14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
                 }}
               >
@@ -2796,11 +2904,11 @@ function QuickLogView({ crew, routes, setRoutes, initialForm, editFlightId, onSa
                 style={{
                   background:   form.position === p ? c.accent : c.pill,
                   color:        form.position === p ? c.adk    : c.sub,
-                  border:       "none", borderRadius: 8, padding: "6px 12px",
-                  fontSize:     13, fontWeight: 700, cursor: "pointer",
+                  border:       "none", borderRadius: 10, padding: "7px 12px",
+                  fontSize:     12, fontWeight: 700, cursor: "pointer",
                 }}
               >
-                {p}
+                {POSITION_LABELS[p] || p}
               </button>
             ))}
           </div>
@@ -2812,6 +2920,76 @@ function QuickLogView({ crew, routes, setRoutes, initialForm, editFlightId, onSa
             style={inp}
             c={c}
           />
+        </Sect>
+
+        {/* ── Pilot Role (PF / PM) ── */}
+        <Sect label="角色 ROLE" c={c}>
+          <div style={{ display: "flex", gap: 8 }}>
+            {PILOT_ROLES.map(r => (
+              <button
+                key={r}
+                onClick={() => setForm(f => ({ ...f, role: f.role === r ? "" : r }))}
+                style={{
+                  flex:       1,
+                  background: form.role === r ? c.accent : c.pill,
+                  color:      form.role === r ? c.adk    : c.sub,
+                  border:     "none", borderRadius: 12, padding: "11px 4px",
+                  fontSize:   13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+                }}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+        </Sect>
+
+        {/* ── Block Time ── */}
+        <Sect label="飛行時間 BLOCK TIME" c={c}>
+          <ClearableInput
+            value={form.blockTime}
+            onChange={e => setForm(f => ({ ...f, blockTime: e.target.value }))}
+            placeholder="e.g. 2:45"
+            autoComplete="off"
+            inputMode="text"
+            style={inp}
+            c={c}
+          />
+        </Sect>
+
+        {/* ── SIM Toggle ── */}
+        <Sect label="模擬機 SIMULATOR" c={c}>
+          <button
+            onClick={() => setForm(f => ({ ...f, isSim: !f.isSim }))}
+            style={{
+              display:      "flex", alignItems: "center", justifyContent: "space-between",
+              width:        "100%", background: form.isSim ? `${c.accent}22` : c.card,
+              border:       `1px solid ${form.isSim ? c.accent : c.border}`,
+              borderRadius: 12, padding: "12px 16px", cursor: "pointer",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 18 }}>🖥</span>
+              <div style={{ textAlign: "left" }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: c.text }}>
+                  {form.isSim ? "✅ 模擬機訓練" : "一般航班"}
+                </div>
+                <div style={{ fontSize: 11, color: c.sub }}>
+                  {form.isSim ? "This log will be marked as a SIM session" : "Tap to mark as simulator"}
+                </div>
+              </div>
+            </div>
+            <div style={{
+              width: 44, height: 24, borderRadius: 12, border: "none",
+              background: form.isSim ? c.accent : c.pill, position: "relative", flexShrink: 0,
+            }}>
+              <div style={{
+                position: "absolute", top: 2, left: form.isSim ? 22 : 2,
+                width: 20, height: 20, borderRadius: "50%",
+                background: form.isSim ? c.adk : c.sub,
+                transition: "left 0.2s",
+              }} />
+            </div>
+          </button>
         </Sect>
 
         {/* ── Status & Tags  (new flights only) ── */}
@@ -2903,17 +3081,17 @@ function QuickLogView({ crew, routes, setRoutes, initialForm, editFlightId, onSa
 function GuideView({ onBack, c }) {
   const sections = [
     {
-      emoji: "✈", title: "什麼是我的天空日記？", en: "What is CrewLog?",
-      content: "CrewLog 是你的私人天空日記。記錄合飛組員，留下備忘，用紅黃綠燈標記好壞，幫助你下次飛行前做好心理準備。\n\nCrewLog is your private cabin crew companion — log who you fly with, leave notes, and mark them green, yellow, or red so you're never caught off-guard again.",
+      emoji: "✈", title: "什麼是我的空中日記？", en: "What is FlightLog?",
+      content: "FlightLog 是你的私人空中日記。記錄合飛機師，留下備忘，用紅黃綠燈標記飛行品質，追蹤飛行時間，幫助你下次飛行前做好準備。\n\nFlightLog is your private flight crew companion — log who you fly with, track block hours, and mark crew green, yellow, or red so you're always prepared.",
     },
     {
       emoji: "🔒", title: "隱私設計", en: "Privacy",
-      content: "飛行紀錄 (備忘、航班) 是完全私人的 — 只有你看得到，不會同步給其他用戶。\n\n組員的基本資料 (名字、期別) 和紅黃綠燈、標籤則是大家共享的，讓整個 app 的資料保持最新。\n\nYour flight logs and memos are private (only you see them). Crew info, status lights, and tags are shared so everyone benefits.",
+      content: "飛行紀錄 (備忘、航班、飛行時間) 是完全私人的 — 只有你看得到，不會同步給其他用戶。\n\n機師的基本資料 (名字、Class/期別) 和紅黃綠燈、標籤則是大家共享的，讓整個 app 的資料保持最新。\n\nYour flight logs, memos, and block hours are private (only you see them). Pilot info, status lights, and tags are shared so everyone benefits.",
     },
     {
       emoji: "🔴🟡🟢", title: "紅黃綠燈", en: "Status Lights", isList: true,
       content: [
-        { icon: "🟢", label: "推薦 Great!",   desc: "好合作、專業、值得信任的組員" },
+        { icon: "🟢", label: "推薦 Great!",   desc: "好合作、專業、值得信任的機師" },
         { icon: "🟡", label: "普通 Neutral",  desc: "一般，沒有特別好或壞" },
         { icon: "🔴", label: "注意 Warning",  desc: "需要注意，可搭配備忘說明原因" },
       ],
@@ -2921,27 +3099,31 @@ function GuideView({ onBack, c }) {
     {
       emoji: "🏷", title: "標籤 Tags", en: "Tags", isList: true,
       content: [
-        { icon: "#好咖", desc: "優秀的組員，合作愉快"    },
-        { icon: "#難搞", desc: "不好合作，注意一下"      },
-        { icon: "#細心", desc: "工作細心，注意到小細節"  },
-        { icon: "#新人", desc: "新組員，需要多幫忙"      },
-        { icon: "#好笑", desc: "幽默風趣，飛起來很開心"  },
-        { icon: "#專業", desc: "工作態度專業"            },
-        { icon: "#八卦", desc: "愛說話，要注意嘴型 👀"  },
-        { icon: "#準時", desc: "很守時，不拖拖拉拉"      },
+        { icon: "#Standard & SOP", desc: "標準作業，SOP 執行良好" },
       ],
     },
     {
       emoji: "📝", title: "如何新增飛行紀錄", en: "How to Log a Flight",
-      content: "1. 點右下角的 ＋ 按鈕，或點組員卡片上的 ＋\n2. 搜尋組員名字、ID 或 Nickname\n3. 選擇日期、航班、機型、職位\n4. 設定紅黃綠燈和標籤\n5. 寫下備忘，然後儲存！\n\nHit + → search crew → fill in details → save. Easy.",
+      content: "1. 點右下角的 ＋ 按鈕，或點機師卡片上的 ＋\n2. 搜尋機師名字、ID 或 Nickname\n3. 選擇日期、航班、機型、職位\n4. 選擇角色 (PF/PM/Observer)\n5. 輸入飛行時間 Block Time (e.g. 2:45)\n6. 模擬機訓練可開啟 SIM 切換\n7. 設定紅黃綠燈和標籤，寫下備忘，儲存！\n\nHit + → search pilot → fill details → save. Easy.",
+    },
+    {
+      emoji: "🛫", title: "職位說明", en: "Pilot Positions", isList: true,
+      content: [
+        { icon: "Capt",  desc: "機長 Captain" },
+        { icon: "SFO",   desc: "資深副機長 (巡航機長) Senior First Officer / Cruise Pilot" },
+        { icon: "FO",    desc: "副機長 First Officer" },
+        { icon: "CP",    desc: "總機長 Chief Pilot" },
+        { icon: "IP",    desc: "教師機師 Instructed Pilot" },
+        { icon: "Check", desc: "考核機長 Check Pilot" },
+      ],
     },
     {
       emoji: "🔍", title: "搜尋功能", en: "Search",
-      content: "搜尋欄可以搜尋：\n• 組員 ID (員工號碼)\n• 中文姓名\n• 英文 Nickname\n• 飛行備忘的內容 (輸入兩個字以上)\n\n有備忘符合的組員會顯示 📝 提示。",
+      content: "搜尋欄可以搜尋：\n• 機師 ID (員工號碼)\n• 中文姓名\n• 英文 Nickname\n• 飛行備忘的內容 (輸入兩個字以上)\n\n有備忘符合的機師會顯示 📝 提示。",
     },
     {
-      emoji: "👤", title: "組員頁面", en: "Crew Profile",
-      content: "點任何組員可以進入個人頁面：\n• 查看你們所有的合飛紀錄\n• 編輯組員基本資料（大家共享）\n• 新增長期筆記（大家共享）\n• 快速設定紅黃綠燈\n• 編輯或刪除個別飛行紀錄",
+      emoji: "👤", title: "機師頁面", en: "Pilot Profile",
+      content: "點任何機師可以進入個人頁面：\n• 查看你們所有的合飛紀錄與飛行時間\n• 編輯機師基本資料（大家共享）\n• 新增長期筆記（大家共享）\n• 快速設定紅黃綠燈\n• 編輯或刪除個別飛行紀錄",
     },
     {
       emoji: "⬇", title: "備份資料", en: "Backup",
@@ -2961,9 +3143,9 @@ function GuideView({ onBack, c }) {
           borderRadius: 20, padding: "20px 16px", marginBottom: 20, textAlign: "center",
         }}>
           <div style={{ fontSize: 36, marginBottom: 8 }}>✈</div>
-          <div style={{ fontSize: 20, fontWeight: 800, color: c.text, marginBottom: 4 }}>我的天空日記</div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: c.text, marginBottom: 4 }}>我的空中日記</div>
           <div style={{ fontSize: 13, color: c.sub, lineHeight: 1.6 }}>
-            記錄每一次合飛 · 留住每一個細節<br />Log every flight · Remember every detail
+            記錄每一次同飛 · 留住每一個細節<br />Log every flight · Remember every detail
           </div>
         </div>
 
@@ -2993,7 +3175,7 @@ function GuideView({ onBack, c }) {
         ))}
 
         <div style={{ textAlign: "center", padding: "20px 0 4px", color: c.sub, fontSize: 11, lineHeight: 1.8 }}>
-          CrewLog v2.0 · EVA Air Edition · Built with ✈ & ❤<br />
+          FlightLog v2.0 · EVA Air Edition · Built with ✈ & ❤<br />
           <span style={{ color: c.accent, fontWeight: 700 }}>Your logs are safe & private.</span>
         </div>
       </div>
@@ -3065,7 +3247,7 @@ function MyLogView({ flights, crew, username, onBack, onGoProfile, onEdit, c }) 
           <ClearableInput
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="搜尋組員姓名或備忘..."
+            placeholder="搜尋機師姓名或備忘..."
             autoComplete="off"
             style={inp}
             c={c}
@@ -3136,7 +3318,7 @@ function MyLogView({ flights, crew, username, onBack, onGoProfile, onEdit, c }) 
                         {/* Crew row — taps to profile */}
                         <div
                           onClick={() => m && onGoProfile(m.id)}
-                          style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: hasMemo ? 7 : 0, cursor: m ? "pointer" : "default" }}
+                          style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4, cursor: m ? "pointer" : "default" }}
                         >
                           {si
                             ? <span style={{ fontSize: 13, lineHeight: 1, flexShrink: 0 }}>{si.emoji}</span>
@@ -3156,6 +3338,17 @@ function MyLogView({ flights, crew, username, onBack, onGoProfile, onEdit, c }) 
                             </span>
                           )}
                         </div>
+
+                        {/* Badges row: aircraft, position, role, blockTime, SIM */}
+                        {(f.aircraft || f.position || f.role || f.blockTime || f.isSim) && (
+                          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: hasMemo ? 6 : 0 }}>
+                            {f.isSim     && <span style={{ background: c.accent + "22", color: c.accent,  borderRadius: 6, padding: "1px 7px", fontSize: 10, fontWeight: 700 }}>SIM</span>}
+                            {f.aircraft  && <span style={{ background: c.pill, color: c.accent,  borderRadius: 6, padding: "1px 7px", fontSize: 10, fontWeight: 700 }}>{f.aircraft}</span>}
+                            {f.position  && <span style={{ background: c.pill, color: c.sub,     borderRadius: 6, padding: "1px 7px", fontSize: 10 }}>{f.position}</span>}
+                            {f.role      && <span style={{ background: c.pill, color: c.sub,     borderRadius: 6, padding: "1px 7px", fontSize: 10, fontWeight: 600 }}>{f.role}</span>}
+                            {f.blockTime && <span style={{ background: c.pill, color: c.text,    borderRadius: 6, padding: "1px 7px", fontSize: 10 }}>⏱ {f.blockTime}</span>}
+                          </div>
+                        )}
 
                         {/* Memo preview (2-line clamp) */}
                         {hasMemo && (
@@ -3229,6 +3422,7 @@ export default function App() {
   const [registrationOpen, setRegistrationOpen] = useState(false); // fetched from Firestore
   const [appShowAcStats,    setAppShowAcStats]    = useState(true);  // fetched from Firestore
   const [appShowRouteStats, setAppShowRouteStats] = useState(true);  // fetched from Firestore
+  const [enabledAircraft,   setEnabledAircraft]   = useState(DEFAULT_ENABLED_AIRCRAFT); // fetched from Firestore
   // forgot-password flow
   const [forgotUser,      setForgotUser]      = useState("");
   const [forgotErr,       setForgotErr]       = useState("");
@@ -3281,9 +3475,9 @@ export default function App() {
   const [tempCrewInfo,   setTempCrewInfo]   = useState({ name: "", nickname: "", seniority: "" });
   const [editNotes,      setEditNotes]      = useState(false);
   const [tempNotes,      setTempNotes]      = useState("");
-  const [showVoteStats,  setShowVoteStats]  = useState(false); // collapsible vote statistics panel
   const [confirmDel,     setConfirmDel]     = useState(null);  // flight id pending delete
   const [confirmDelCrew, setConfirmDelCrew] = useState(false);
+  const [showVoteStats,  setShowVoteStats]  = useState(false);  // toggle vote statistics panel
 
   // ── §13.10  User preferences (persisted to localStorage) ──────────────────
   const [customTags, setCustomTags] = useState(() => {
@@ -3323,6 +3517,7 @@ export default function App() {
         setRegistrationOpen(s.registrationOpen === true);
         setAppShowAcStats(s.showAcStats    !== false);
         setAppShowRouteStats(s.showRouteStats !== false);
+        if (Array.isArray(s.enabledAircraft)) setEnabledAircraft(s.enabledAircraft);
       }
     }).catch(() => {});
     if (layer1 === "ok" && layer2 === "ok" && saved) { setUsername(saved); setAuthStep("app"); }
@@ -3344,22 +3539,8 @@ export default function App() {
       SHARED_DOC,
       (snap) => {
         isRemoteShared.current = true;
-        if (snap.exists()) { 
-          const d = snap.data(); 
-          // Ensure all crew members have votes field initialized
-          const crewWithVotes = (d.crew || INITIAL_CREW).map(m => ({ 
-            ...m, 
-            votes: m.votes || {} 
-          }));
-          setCrew(crewWithVotes); 
-          setRoutes(d.routes || []); 
-        }
-        else { 
-          // Initialize INITIAL_CREW with votes field
-          const crewWithVotes = INITIAL_CREW.map(m => ({ ...m, votes: {} }));
-          setCrew(crewWithVotes); 
-          setRoutes([]); 
-        }
+        if (snap.exists()) { const d = snap.data(); setCrew(d.crew || INITIAL_CREW); setRoutes(d.routes || []); }
+        else               { setCrew(INITIAL_CREW); setRoutes([]); }
         setSyncStatus("synced");
         setReady(true);
       },
@@ -3581,9 +3762,9 @@ export default function App() {
           to_email: email, 
           username: uname, 
           otp_code: code,
-          from_name: "CrewLog Team",
-          from_email: "noreply@crewlog.app",
-          reply_to: "noreply@crewlog.app"
+          from_name: "FlightLog Team",
+          from_email: "noreply@flightlog.app",
+          reply_to: "noreply@flightlog.app"
         },
       };
       console.log("→ Full payload:", JSON.stringify(emailPayload, null, 2));
@@ -3692,17 +3873,13 @@ export default function App() {
     const blob  = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url   = URL.createObjectURL(blob);
     const a     = document.createElement("a");
-    a.href = url; a.download = `cabinlog-backup-${today()}.json`; a.click();
+    a.href = url; a.download = `flightlog-backup-${today()}.json`; a.click();
     URL.revokeObjectURL(url);
   };
 
   /** Merges an imported JSON backup into local state. */
   const handleImport = useCallback((data) => {
-    if (data.crew && Array.isArray(data.crew)) {
-      // Ensure all imported crew members have votes field initialized
-      const crewWithVotes = data.crew.map(m => ({ ...m, votes: m.votes || {} }));
-      setCrew(crewWithVotes);
-    }
+    if (data.crew        && Array.isArray(data.crew))       setCrew(data.crew);
     if (data.routes      && Array.isArray(data.routes))     setRoutes(data.routes);
     if (Array.isArray(data.flights))                        setFlights(data.flights);
     if (Array.isArray(data.customTags))                     setCustomTags(data.customTags);
@@ -3718,43 +3895,30 @@ export default function App() {
     setCrew(cr => cr.map(m => m.id === id ? { ...m, ...patch } : m));
 
   /** 
-   * Records a status vote for a crew member.
-   * Updates both the crew member's status AND adds/updates the vote in their votes object.
-   * @param {string} id - crew member ID
-   * @param {string|null} newStatus - "red", "yellow", "green", or null to remove vote
+   * Vote on a crew member's status and record the vote.
+   * Tracks: username, status color, timestamp
    */
   const voteStatus = (id, newStatus) => {
     setCrew(cr => cr.map(m => {
       if (m.id !== id) return m;
       
-      // Initialize votes object if it doesn't exist
-      const votes = m.votes || {};
+      // Initialize votes array if it doesn't exist
+      const votes = m.votes || [];
       
-      // Update or remove this user's vote
-      const updatedVotes = { ...votes };
-      if (newStatus === null) {
-        delete updatedVotes[username];
-      } else {
-        updatedVotes[username] = {
-          color: newStatus,
-          timestamp: Date.now()
-        };
-      }
+      // Add new vote record
+      const newVote = {
+        username,
+        status: newStatus,
+        timestamp: Date.now(),
+      };
       
-      // Calculate most recent status from all votes (use the latest vote's color)
-      let latestStatus = null;
-      let latestTime = 0;
-      Object.entries(updatedVotes).forEach(([user, vote]) => {
-        if (vote.timestamp > latestTime) {
-          latestTime = vote.timestamp;
-          latestStatus = vote.color;
-        }
-      });
+      // Keep only last 20 votes (to prevent unbounded growth)
+      const updatedVotes = [newVote, ...votes].slice(0, 20);
       
-      return {
-        ...m,
-        votes: updatedVotes,
-        status: latestStatus
+      return { 
+        ...m, 
+        status: m.status === newStatus ? null : newStatus,
+        votes: updatedVotes 
       };
     }));
   };
@@ -3782,10 +3946,11 @@ export default function App() {
   /** Navigate to a crew member's profile, resetting all inline edit state. */
   const goProfile = (id) => {
     setProfileId(id);
+    setEditCrewInfo(false);
     setEditNotes(false);
     setConfirmDel(null);
     setConfirmDelCrew(false);
-    setShowVoteStats(false); // reset vote statistics panel
+    setShowVoteStats(false);  // Reset vote stats panel when switching profiles
     setView("profile");
   };
 
@@ -3806,6 +3971,9 @@ export default function App() {
         route:     flightToEdit.route      || "",
         aircraft:  flightToEdit.aircraft   || "",
         position:  flightToEdit.position   || "",
+        role:      flightToEdit.role       || "",
+        blockTime: flightToEdit.blockTime  || "",
+        isSim:     flightToEdit.isSim      || false,
         memo:      flightToEdit.memo       || "",
         status:    null,
         tags:      [],
@@ -3841,6 +4009,9 @@ export default function App() {
       route:     form.route,
       aircraft:  form.aircraft,
       position:  form.position,
+      role:      form.role      || "",
+      blockTime: form.blockTime || "",
+      isSim:     form.isSim    || false,
       memo:      form.memo,
     };
 
@@ -3910,6 +4081,7 @@ export default function App() {
       return a.nickname.localeCompare(b.nickname, "ja");
     });
 
+
   /** Active profile crew member and their flight history. */
   const pMember  = crew.find(m => m.id === profileId);
   const pFlights = flights.filter(f => f.crewId === profileId).sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -3948,9 +4120,9 @@ export default function App() {
       <div style={{ width: "100%", maxWidth: 360 }}>
         {/* Logo + branding */}
         <div style={{ textAlign: "center", marginBottom: 40 }}>
-          <img src="/logo.png" alt="CrewLog" style={{ width: 80, height: 80, objectFit: "contain", marginBottom: 12, borderRadius: 18 }} />
-          <div style={{ fontSize: 9, letterSpacing: 5, color: c.accent, fontWeight: 700, marginBottom: 6 }}>CREW LOG</div>
-          <div style={{ fontSize: 26, fontWeight: 800, color: c.text, lineHeight: 1.2 }}>我的天空日記</div>
+          <img src="/logo.png" alt="FlightLog" style={{ width: 80, height: 80, objectFit: "contain", marginBottom: 12, borderRadius: 18 }} />
+          <div style={{ fontSize: 9, letterSpacing: 5, color: c.accent, fontWeight: 700, marginBottom: 6 }}>FLIGHT LOG</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: c.text, lineHeight: 1.2 }}>我的空中日記</div>
           <div style={{ fontSize: 13, color: c.sub, marginTop: 8 }}>Enter crew passcode to continue</div>
         </div>
         {/* Layer 1 card */}
@@ -3989,9 +4161,9 @@ export default function App() {
       <style>{gs}</style>
       <div style={{ width: "100%", maxWidth: 360 }}>
         <div style={{ textAlign: "center", marginBottom: 40 }}>
-          <img src="/logo.png" alt="CrewLog" style={{ width: 80, height: 80, objectFit: "contain", marginBottom: 12, borderRadius: 18 }} />
-          <div style={{ fontSize: 9, letterSpacing: 5, color: c.accent, fontWeight: 700, marginBottom: 6 }}>CREW LOG</div>
-          <div style={{ fontSize: 26, fontWeight: 800, color: c.text, lineHeight: 1.2 }}>我的天空日記</div>
+          <img src="/logo.png" alt="FlightLog" style={{ width: 80, height: 80, objectFit: "contain", marginBottom: 12, borderRadius: 18 }} />
+          <div style={{ fontSize: 9, letterSpacing: 5, color: c.accent, fontWeight: 700, marginBottom: 6 }}>FLIGHT LOG</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: c.text, lineHeight: 1.2 }}>我的空中日記</div>
           <div style={{ fontSize: 13, color: c.sub, marginTop: 8 }}>Sign in to your personal account</div>
         </div>
         {/* Layer 2 card */}
@@ -4077,10 +4249,10 @@ export default function App() {
       <style>{gs}</style>
       <div style={{ width: "100%", maxWidth: 360 }}>
         <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <img src="/logo.png" alt="CrewLog" style={{ width: 72, height: 72, objectFit: "contain", marginBottom: 12, borderRadius: 16 }} />
+          <img src="/logo.png" alt="FlightLog" style={{ width: 72, height: 72, objectFit: "contain", marginBottom: 12, borderRadius: 16 }} />
           <div style={{ fontSize: 22, fontWeight: 800, color: c.text }}>建立帳號</div>
           <div style={{ fontSize: 13, color: c.sub, marginTop: 8, lineHeight: 1.6 }}>
-            Create your personal CrewLog account.<br />
+            Create your personal FlightLog account.<br />
             <span style={{ color: c.accent, fontWeight: 700 }}>Your flight logs are private to you only.</span>
           </div>
         </div>
@@ -4207,7 +4379,7 @@ export default function App() {
           <div style={{ fontSize: 10, letterSpacing: 3, color: c.sub, fontWeight: 700, marginBottom: 8 }}>驗證碼 RESET CODE</div>
           <ClearableInput
             value={otpInput}
-            onChange={e => { setOtpInput(e.target.value.replace(/\D/g, "").slice(0, 6)); setOtpErr(""); }}
+            onChange={e => { setOtpInput(e.target.value.split("").filter(ch => ch >= "0" && ch <= "9").join("").slice(0, 6)); setOtpErr(""); }}
             onKeyDown={e => e.key === "Enter" && submitOtp()}
             placeholder="000000"
             autoFocus
@@ -4311,7 +4483,7 @@ export default function App() {
         {/* Top row: title only - buttons moved to bottom nav */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div>
-            <div style={{ fontSize: 9, letterSpacing: 4, color: c.accent, fontWeight: 700, marginBottom: 2 }}>CREW LOG ✈ 我的天空日記</div>
+            <div style={{ fontSize: 9, letterSpacing: 4, color: c.accent, fontWeight: 700, marginBottom: 2 }}>FLIGHT LOG ✈ 我的空中日記</div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <div style={{ fontSize: 22, fontWeight: 800, color: c.text }}>Dashboard</div>
               <SyncBadge syncStatus={syncStatus} c={c} />
@@ -4347,7 +4519,7 @@ export default function App() {
             <span style={{ fontSize: 13, fontWeight: 700, color: c.text }}>{username}</span>
             <span style={{ fontSize: 11, color: c.sub }}>· {flights.length} 筆</span>
           </div>
-          <span style={{ fontSize: 11, color: c.accent, fontWeight: 700 }}>日記 ›</span>
+          <span style={{ fontSize: 11, color: c.accent, fontWeight: 700 }}>飛行日誌 ›</span>
         </div>
 
         {/* Search input */}
@@ -4383,7 +4555,7 @@ export default function App() {
         {/* Recent strip — hidden when searching or filtering */}
         {recentIds.length > 0 && !search && !filterTag && (
           <div style={{ marginBottom: 20 }}>
-            <div style={{ fontSize: 9, letterSpacing: 3, color: c.sub, fontWeight: 700, marginBottom: 8 }}>我的最近合飛 MY RECENT</div>
+            <div style={{ fontSize: 9, letterSpacing: 3, color: c.sub, fontWeight: 700, marginBottom: 8 }}>我的最近同飛 MY RECENT</div>
             <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 8, touchAction: "pan-x", WebkitOverflowScrolling: "touch" }}>
               {recentIds.map(id => {
                 const m    = crew.find(x => x.id === id); if (!m) return null;
@@ -4468,33 +4640,36 @@ export default function App() {
           })}
         </div>
 
+
         {/* Add new crew form */}
         <div style={{ marginTop: 24, background: c.card, border: `1px dashed ${c.border}`, borderRadius: 16, padding: 16 }}>
-          <div style={{ fontSize: 10, letterSpacing: 3, color: c.accent, fontWeight: 700, marginBottom: 4 }}>新增組員 ADD CREW</div>
-          <div style={{ fontSize: 10, color: c.sub, marginBottom: 12 }}>⚠ Shared with all users</div>
+          <div style={{ fontSize: 10, letterSpacing: 3, color: c.accent, fontWeight: 700, marginBottom: 4 }}>新增機師 ADD PILOT</div>
+          <div style={{ fontSize: 10, color: c.sub, marginBottom: 12 }}>⚠ Shared with all pilots</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
-            <ClearableInput value={newCrew.id}        onChange={e => setNewCrew(n => ({ ...n, id:        e.target.value }))} placeholder="員工 ID *"        autoComplete="off" style={{ ...inp, fontSize: 13, padding: "9px 12px" }} c={c} />
-            <ClearableInput value={newCrew.nickname}  onChange={e => setNewCrew(n => ({ ...n, nickname:  e.target.value }))} placeholder="Nickname *"        autoComplete="off" style={{ ...inp, fontSize: 13, padding: "9px 12px" }} c={c} />
-            <ClearableInput value={newCrew.name}      onChange={e => setNewCrew(n => ({ ...n, name:      e.target.value }))} placeholder="姓名 (中文/日文)" autoComplete="off" style={{ ...inp, fontSize: 13, padding: "9px 12px" }} c={c} />
-            <ClearableInput value={newCrew.seniority} onChange={e => setNewCrew(n => ({ ...n, seniority: e.target.value }))} placeholder="期別 e.g. 24G"     autoComplete="off" style={{ ...inp, fontSize: 13, padding: "9px 12px" }} c={c} />
+            <ClearableInput value={newCrew.id}        onChange={e => setNewCrew(n => ({ ...n, id:        e.target.value.toUpperCase() }))} placeholder="員工 ID *"    autoComplete="off" style={{ ...inp, fontSize: 13, padding: "9px 12px", textTransform: "uppercase" }} c={c} />
+            <ClearableInput value={newCrew.nickname}  onChange={e => setNewCrew(n => ({ ...n, nickname:  e.target.value.toUpperCase() }))} placeholder="Eng Name *"   autoComplete="off" style={{ ...inp, fontSize: 13, padding: "9px 12px", textTransform: "uppercase" }} c={c} />
+            <ClearableInput value={newCrew.name}      onChange={e => setNewCrew(n => ({ ...n, name:      e.target.value.toUpperCase() }))} placeholder="Full Name 姓名" autoComplete="off" style={{ ...inp, fontSize: 13, padding: "9px 12px", textTransform: "uppercase" }} c={c} />
+            <ClearableInput value={newCrew.seniority} onChange={e => setNewCrew(n => ({ ...n, seniority: e.target.value.toUpperCase() }))} placeholder="CLASS" autoComplete="off" style={{ ...inp, fontSize: 13, padding: "9px 12px", textTransform: "uppercase" }} c={c} />
           </div>
           {addCrewErr && <div style={{ color: "#FF453A", fontSize: 12, marginBottom: 8 }}>{addCrewErr}</div>}
           <button
             onClick={() => {
               setAddCrewErr("");
-              if (!newCrew.id.trim() || !newCrew.nickname.trim()) { setAddCrewErr("ID 和英文名為必填"); return; }
+              if (!newCrew.id.trim() || !newCrew.nickname.trim()) { setAddCrewErr("ID 和 Eng Name 為必填"); return; }
               if (crew.find(m => m.id === newCrew.id.trim()))     { setAddCrewErr("此 ID 已存在"); return; }
               const dupNick = crew.find(m => m.nickname.toLowerCase() === newCrew.nickname.trim().toLowerCase());
-              if (dupNick) { setAddCrewErr(`"${newCrew.nickname}" 已有同名組員 (${dupNick.name} · ${dupNick.seniority})`); return; }
+              if (dupNick) { setAddCrewErr(`"${newCrew.nickname}" 已有同名機師 (${dupNick.name} · ${dupNick.seniority})`); return; }
+              let sen = newCrew.seniority.trim();
+              const isDigits = sen.length >= 1 && sen.length <= 3 && sen.split("").every(ch => ch >= "0" && ch <= "9");
+              if (isDigits) sen = `CLASS ${sen}`;
               setCrew(cr => [...cr, {
                 id:        newCrew.id.trim(),
                 name:      newCrew.name.trim(),
                 nickname:  newCrew.nickname.trim(),
-                seniority: newCrew.seniority.trim(),
+                seniority: sen,
                 status:    null,
                 tags:      [],
                 notes:     "",
-                votes:     {}, // initialize empty votes object
               }]);
               setNewCrew({ id: "", name: "", nickname: "", seniority: "" });
             }}
@@ -4640,7 +4815,7 @@ export default function App() {
               <div style={{ fontSize: 22, fontWeight: 800, color: c.text, lineHeight: 1.1 }}>{m.nickname}</div>
               <div style={{ fontSize: 14, color: c.sub }}>{m.name}</div>
               <div style={{ fontSize: 11, color: c.accent, fontWeight: 700, marginTop: 2 }}>
-                {m.seniority} · #{m.id} · {pFlights.length} 次 (我的)
+                {m.seniority} · #{m.id} · {pFlights.length} 次同飛 (我的)
               </div>
             </div>
           </div>
@@ -4650,7 +4825,7 @@ export default function App() {
             {Object.entries(STATUS_MAP).map(([k, v]) => (
               <button
                 key={k}
-                onClick={() => voteStatus(m.id, m.status === k ? null : k)}
+                onClick={() => voteStatus(m.id, k)}
                 style={{
                   flex: 1, background: m.status === k ? v.bg : c.pill,
                   border: `1px solid ${m.status === k ? v.color : c.border}`,
@@ -4666,6 +4841,129 @@ export default function App() {
 
         {/* ── Profile body ── */}
         <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", padding: "14px 16px 100px", WebkitOverflowScrolling: "touch" }}>
+
+          {/* Vote Statistics Panel (Collapsible) */}
+          <div style={{ marginBottom: 16 }}>
+            {/* Toggle Button */}
+            <button
+              onClick={() => setShowVoteStats(!showVoteStats)}
+              style={{
+                width: "100%",
+                background: showVoteStats ? c.accent : c.pill,
+                color: showVoteStats ? c.adk : c.sub,
+                border: `1px solid ${showVoteStats ? c.accent : c.border}`,
+                borderRadius: 10,
+                padding: "10px 14px",
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <span style={{ letterSpacing: 2 }}>
+                {showVoteStats ? "▼" : "▶"} 票數統計 VOTE BREAKDOWN
+              </span>
+              <span style={{ fontSize: 11 }}>
+                ({(m.votes || []).length} votes)
+              </span>
+            </button>
+
+            {/* Vote Statistics Content (shown when expanded) */}
+            {showVoteStats && (
+              <div style={{ 
+                background: c.cardAlt, 
+                border: `1px solid ${c.border}`, 
+                borderRadius: 10, 
+                padding: "14px", 
+                marginTop: 8 
+              }}>
+                {/* Vote Breakdown by Color */}
+                <div style={{ 
+                  display: "flex", 
+                  justifyContent: "space-around", 
+                  marginBottom: 16,
+                  paddingBottom: 12,
+                  borderBottom: `1px solid ${c.border}` 
+                }}>
+                  {["green", "yellow", "red"].map(color => {
+                    const count = (m.votes || []).filter(v => v.status === color).length;
+                    const s = STATUS_MAP[color];
+                    return (
+                      <div key={color} style={{ textAlign: "center" }}>
+                        <div style={{ fontSize: 20, marginBottom: 4 }}>{s.emoji}</div>
+                        <div style={{ fontSize: 18, fontWeight: 800, color: s.color, marginBottom: 2 }}>{count}</div>
+                        <div style={{ fontSize: 10, color: c.sub, textTransform: "uppercase" }}>
+                          {color}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Recent Votes */}
+                {(m.votes || []).length > 0 && (
+                  <div>
+                    <div style={{ 
+                      fontSize: 9, 
+                      letterSpacing: 2, 
+                      color: c.sub, 
+                      fontWeight: 700, 
+                      marginBottom: 8,
+                      textAlign: "center" 
+                    }}>
+                      RECENT VOTES
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {(m.votes || []).slice(0, 3).map((vote, idx) => {
+                        const s = STATUS_MAP[vote.status];
+                        const isYou = vote.username === username;
+                        return (
+                          <div 
+                            key={idx} 
+                            style={{ 
+                              display: "flex", 
+                              alignItems: "center", 
+                              gap: 8,
+                              background: c.card,
+                              borderRadius: 8,
+                              padding: "6px 10px",
+                            }}
+                          >
+                            <span style={{ 
+                              fontSize: 11, 
+                              fontWeight: 700, 
+                              color: isYou ? c.accent : c.text,
+                              flex: 1 
+                            }}>
+                              {isYou ? "YOU" : vote.username}
+                            </span>
+                            <span style={{ fontSize: 14 }}>{s.emoji}</span>
+                            <span style={{ fontSize: 10, color: c.sub, minWidth: 50, textAlign: "right" }}>
+                              {formatRelativeTime(vote.timestamp)}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* No votes message */}
+                {(m.votes || []).length === 0 && (
+                  <div style={{ 
+                    textAlign: "center", 
+                    color: c.sub, 
+                    fontSize: 12, 
+                    padding: "8px 0" 
+                  }}>
+                    No votes yet. Be the first to vote!
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
           {/* Crew Info (shared — editable by anyone) */}
           <div style={{ marginBottom: 16 }}>
@@ -4690,12 +4988,12 @@ export default function App() {
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <ClearableInput value={tempCrewInfo.nickname}  onChange={e => setTempCrewInfo(t => ({ ...t, nickname:  e.target.value }))} placeholder="Nickname *"   autoComplete="off" style={{ ...inp, borderRadius: 12, padding: "10px 14px" }} c={c} />
                 <ClearableInput value={tempCrewInfo.name}      onChange={e => setTempCrewInfo(t => ({ ...t, name:      e.target.value }))} placeholder="姓名"          autoComplete="off" style={{ ...inp, borderRadius: 12, padding: "10px 14px" }} c={c} />
-                <ClearableInput value={tempCrewInfo.seniority} onChange={e => setTempCrewInfo(t => ({ ...t, seniority: e.target.value }))} placeholder="期別 e.g. 24G" autoComplete="off" style={{ ...inp, borderRadius: 12, padding: "10px 14px" }} c={c} />
+                <ClearableInput value={tempCrewInfo.seniority} onChange={e => setTempCrewInfo(t => ({ ...t, seniority: e.target.value.toUpperCase() }))} placeholder="CLASS" autoComplete="off" style={{ ...inp, borderRadius: 12, padding: "10px 14px", textTransform: "uppercase" }} c={c} />
               </div>
             ) : (
               <div style={{ background: c.cardAlt, border: `1px solid ${c.border}`, borderRadius: 12, padding: "10px 14px", fontSize: 13, color: c.sub, lineHeight: 1.8 }}>
                 <span style={{ color: c.text, fontWeight: 700 }}>{m.nickname}</span> · {m.name}<br />
-                期別 {m.seniority} · #{m.id}
+                受訓期 {m.seniority} · #{m.id}
               </div>
             )}
           </div>
@@ -4743,142 +5041,10 @@ export default function App() {
             }
           </div>
 
-          {/* Vote Statistics (collapsible) */}
-          <div style={{ marginBottom: 16 }}>
-            {/* Toggle button */}
-            <button
-              onClick={() => setShowVoteStats(!showVoteStats)}
-              style={{
-                width: "100%",
-                background: showVoteStats ? c.accent : c.card,
-                border: `1px solid ${c.border}`,
-                borderRadius: 12,
-                padding: "12px 14px",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                color: showVoteStats ? c.adk : c.text,
-                fontWeight: 700,
-                fontSize: 11,
-                letterSpacing: 2,
-                marginBottom: showVoteStats ? 8 : 0,
-                transition: "all 0.2s"
-              }}
-            >
-              <span>{showVoteStats ? "▼" : "▶"}</span>
-              <span style={{ flex: 1, textAlign: "left" }}>票數統計 VOTE BREAKDOWN</span>
-              <span style={{ fontSize: 10, opacity: 0.8 }}>
-                ({Object.keys(m.votes || {}).length} votes)
-              </span>
-            </button>
-
-            {/* Expanded statistics panel */}
-            {showVoteStats && (
-              <div style={{
-                background: c.cardAlt,
-                border: `1px solid ${c.border}`,
-                borderRadius: 12,
-                padding: "14px",
-              }}>
-                {/* Vote breakdown */}
-                <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-                  {Object.entries(STATUS_MAP).map(([k, v]) => {
-                    const count = Object.values(m.votes || {}).filter(vote => vote.color === k).length;
-                    return (
-                      <div
-                        key={k}
-                        style={{
-                          flex: 1,
-                          textAlign: "center",
-                          padding: "8px 4px",
-                          borderRadius: 8,
-                          background: v.bg,
-                          border: `1px solid ${v.border}`
-                        }}
-                      >
-                        <div style={{ fontSize: 18 }}>{v.emoji}</div>
-                        <div style={{ fontSize: 16, fontWeight: 800, color: v.color, marginTop: 2 }}>{count}</div>
-                        <div style={{ fontSize: 8, color: v.color, fontWeight: 700, marginTop: 2, textTransform: "uppercase" }}>
-                          {k}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Recent votes section */}
-                {Object.keys(m.votes || {}).length > 0 && (
-                  <>
-                    <div style={{
-                      fontSize: 9,
-                      letterSpacing: 2,
-                      color: c.sub,
-                      fontWeight: 700,
-                      marginBottom: 8,
-                      textAlign: "center",
-                      borderTop: `1px solid ${c.border}`,
-                      paddingTop: 12
-                    }}>
-                      RECENT VOTES
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      {Object.entries(m.votes || {})
-                        .sort((a, b) => b[1].timestamp - a[1].timestamp)
-                        .slice(0, 3)
-                        .map(([user, vote]) => {
-                          const si = STATUS_MAP[vote.color];
-                          return (
-                            <div
-                              key={user}
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 8,
-                                padding: "6px 10px",
-                                background: c.card,
-                                borderRadius: 8,
-                                border: `1px solid ${c.border}`
-                              }}
-                            >
-                              <span style={{
-                                fontWeight: 700,
-                                color: user === username ? c.accent : c.text,
-                                fontSize: 12,
-                                flex: 1
-                              }}>
-                                {user === username ? "YOU" : user}
-                              </span>
-                              <span style={{ fontSize: 14 }}>{si.emoji}</span>
-                              <span style={{ fontSize: 10, color: c.sub }}>
-                                {formatTimeAgo(vote.timestamp)}
-                              </span>
-                            </div>
-                          );
-                        })}
-                    </div>
-                  </>
-                )}
-
-                {/* Empty state */}
-                {Object.keys(m.votes || {}).length === 0 && (
-                  <div style={{
-                    textAlign: "center",
-                    color: c.sub,
-                    fontSize: 12,
-                    padding: "12px 0"
-                  }}>
-                    No votes yet
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
           {/* Private flight history timeline */}
           <div>
             <div style={{ fontSize: 9, letterSpacing: 3, color: c.sub, fontWeight: 700, marginBottom: 14 }}>
-              我的合飛紀錄 MY HISTORY ({pFlights.length}) <span style={{ fontWeight: 400, fontSize: 8 }}>🔒 only you</span>
+              我的同飛紀錄 MY HISTORY ({pFlights.length}) <span style={{ fontWeight: 400, fontSize: 8 }}>🔒 only you</span>
             </div>
 
             {pFlights.length === 0 ? (
@@ -4898,6 +5064,7 @@ export default function App() {
                       {/* Flight header */}
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 5 }}>
                         <span style={{ fontWeight: 700, color: c.text, fontSize: 14 }}>
+                          {f.isSim && <span style={{ background: c.accent + "22", color: c.accent, borderRadius: 6, padding: "1px 6px", fontSize: 10, fontWeight: 700, marginRight: 6 }}>SIM</span>}
                           {f.flightNum || "—"}
                           {f.route && <span style={{ color: c.sub, fontSize: 12, fontWeight: 400, marginLeft: 8 }}>{f.route}</span>}
                         </span>
@@ -4926,10 +5093,12 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* Aircraft & position badges */}
+                      {/* Aircraft, position, role, blockTime badges */}
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: f.memo ? 5 : 0 }}>
-                        {f.aircraft && <span style={{ background: c.pill, color: c.accent, borderRadius: 8, padding: "2px 8px", fontSize: 11, fontWeight: 700 }}>{f.aircraft}</span>}
-                        {f.position && <span style={{ background: c.pill, color: c.sub,    borderRadius: 8, padding: "2px 8px", fontSize: 11 }}>{f.position}</span>}
+                        {f.aircraft  && <span style={{ background: c.pill, color: c.accent, borderRadius: 8, padding: "2px 8px", fontSize: 11, fontWeight: 700 }}>{f.aircraft}</span>}
+                        {f.position  && <span style={{ background: c.pill, color: c.sub,    borderRadius: 8, padding: "2px 8px", fontSize: 11 }}>{f.position}</span>}
+                        {f.role      && <span style={{ background: c.pill, color: c.sub,    borderRadius: 8, padding: "2px 8px", fontSize: 11, fontWeight: 600 }}>{f.role}</span>}
+                        {f.blockTime && <span style={{ background: c.pill, color: c.text,   borderRadius: 8, padding: "2px 8px", fontSize: 11, fontWeight: 600 }}>⏱ {f.blockTime}</span>}
                       </div>
 
                       {/* Memo */}
@@ -4960,7 +5129,7 @@ export default function App() {
                 onClick={() => setConfirmDelCrew(true)}
                 style={{ width: "100%", background: "transparent", color: "#FF453A", border: "1px solid rgba(255,69,58,0.35)", borderRadius: 12, padding: "11px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
               >
-                🗑 刪除此組員 Delete Crew Member
+                🗑 刪除此機師 Delete Pilot
               </button>
             )}
           </div>
@@ -5006,6 +5175,7 @@ export default function App() {
             c={c}
             profileId={profileId}
             allTags={allTags}
+            activeAircraft={enabledAircraft}
           />
         )}
 
@@ -5074,6 +5244,8 @@ export default function App() {
             routes={routes}
             setRoutes={setRoutes}
             flights={flights}
+            enabledAircraft={enabledAircraft}
+            setEnabledAircraft={setEnabledAircraft}
           />
         )}
 
