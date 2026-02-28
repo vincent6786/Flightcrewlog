@@ -1828,28 +1828,39 @@ function SettingsView({
     width:        "100%",
   };
 
-  // ── Load accounts + usage + appSettings from Firestore on mount ────────────────
+  // ── Load accounts + usage + appSettings from Firestore with real-time updates ──
   useEffect(() => {
-    Promise.all([getDoc(ACCOUNTS_DOC), getDoc(USAGE_DOC), getDoc(APP_SETTINGS_DOC)])
-      .then(([accSnap, usageSnap, settSnap]) => {
-        const accs = accSnap.exists() ? (accSnap.data().accounts || {}) : {};
-        setAccounts(accs);
-        // Initialize tempEmail with current user's email
-        const userAcct = typeof accs[username] === "object" 
-          ? accs[username] 
-          : { password: accs[username], email: "" };
-        setTempEmail(userAcct.email || "");
-        
-        setUsageData(usageSnap.exists() ? (usageSnap.data().usage   || {}) : {});
-        if (settSnap.exists()) {
-          const s = settSnap.data();
-          setRegOpen(s.registrationOpen === true);
-          setShowAcStats(s.showAcStats    !== false); // default true
-          setShowRouteStats(s.showRouteStats !== false); // default true
-        }
-      })
-      .catch(() => {})
-      .finally(() => setAccsLoading(false));
+    // Set up real-time listeners for accounts, usage, and settings
+    const unsubAccounts = onSnapshot(ACCOUNTS_DOC, (accSnap) => {
+      const accs = accSnap.exists() ? (accSnap.data().accounts || {}) : {};
+      setAccounts(accs);
+      // Initialize tempEmail with current user's email
+      const userAcct = typeof accs[username] === "object" 
+        ? accs[username] 
+        : { password: accs[username], email: "" };
+      setTempEmail(userAcct.email || "");
+      setAccsLoading(false);
+    });
+
+    const unsubUsage = onSnapshot(USAGE_DOC, (usageSnap) => {
+      setUsageData(usageSnap.exists() ? (usageSnap.data().usage || {}) : {});
+    });
+
+    const unsubSettings = onSnapshot(APP_SETTINGS_DOC, (settSnap) => {
+      if (settSnap.exists()) {
+        const s = settSnap.data();
+        setRegOpen(s.registrationOpen === true);
+        setShowAcStats(s.showAcStats !== false); // default true
+        setShowRouteStats(s.showRouteStats !== false); // default true
+      }
+    });
+
+    // Cleanup function to unsubscribe from all listeners
+    return () => {
+      unsubAccounts();
+      unsubUsage();
+      unsubSettings();
+    };
   }, [username]);
 
   /** Add a new account to Firestore */
@@ -3896,6 +3907,7 @@ export default function App() {
 
   /** 
    * Vote on a crew member's status and record the vote.
+   * Each user can only have ONE active vote - new votes replace old ones.
    * Tracks: username, status color, timestamp
    */
   const voteStatus = (id, newStatus) => {
@@ -3905,6 +3917,9 @@ export default function App() {
       // Initialize votes array if it doesn't exist
       const votes = m.votes || [];
       
+      // Remove any previous votes from this user
+      const votesWithoutCurrentUser = votes.filter(v => v.username !== username);
+      
       // Add new vote record
       const newVote = {
         username,
@@ -3912,8 +3927,8 @@ export default function App() {
         timestamp: Date.now(),
       };
       
-      // Keep only last 20 votes (to prevent unbounded growth)
-      const updatedVotes = [newVote, ...votes].slice(0, 20);
+      // Combine: new vote + other users' votes (keep last 20 total)
+      const updatedVotes = [newVote, ...votesWithoutCurrentUser].slice(0, 20);
       
       return { 
         ...m, 
@@ -4916,36 +4931,49 @@ export default function App() {
                       RECENT VOTES
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      {(m.votes || []).slice(0, 3).map((vote, idx) => {
-                        const s = STATUS_MAP[vote.status];
-                        const isYou = vote.username === username;
-                        return (
-                          <div 
-                            key={idx} 
-                            style={{ 
-                              display: "flex", 
-                              alignItems: "center", 
-                              gap: 8,
-                              background: c.card,
-                              borderRadius: 8,
-                              padding: "6px 10px",
-                            }}
-                          >
-                            <span style={{ 
-                              fontSize: 11, 
-                              fontWeight: 700, 
-                              color: isYou ? c.accent : c.text,
-                              flex: 1 
-                            }}>
-                              {isYou ? "YOU" : vote.username}
-                            </span>
-                            <span style={{ fontSize: 14 }}>{s.emoji}</span>
-                            <span style={{ fontSize: 10, color: c.sub, minWidth: 50, textAlign: "right" }}>
-                              {formatRelativeTime(vote.timestamp)}
-                            </span>
-                          </div>
-                        );
-                      })}
+                      {(() => {
+                        // Get unique votes (one per user, most recent first)
+                        const uniqueVotes = [];
+                        const seenUsers = new Set();
+                        for (const vote of (m.votes || [])) {
+                          if (!seenUsers.has(vote.username)) {
+                            uniqueVotes.push(vote);
+                            seenUsers.add(vote.username);
+                          }
+                          if (uniqueVotes.length >= 3) break;
+                        }
+                        
+                        return uniqueVotes.map((vote, idx) => {
+                          const s = STATUS_MAP[vote.status];
+                          const isYou = vote.username === username;
+                          return (
+                            <div 
+                              key={idx} 
+                              style={{ 
+                                display: "flex", 
+                                alignItems: "center", 
+                                gap: 8,
+                                background: c.card,
+                                borderRadius: 8,
+                                padding: "6px 10px",
+                              }}
+                            >
+                              <span style={{ 
+                                fontSize: 11, 
+                                fontWeight: 700, 
+                                color: isYou ? c.accent : c.text,
+                                flex: 1 
+                              }}>
+                                {isYou ? "YOU" : vote.username}
+                              </span>
+                              <span style={{ fontSize: 14 }}>{s.emoji}</span>
+                              <span style={{ fontSize: 10, color: c.sub, minWidth: 50, textAlign: "right" }}>
+                                {formatRelativeTime(vote.timestamp)}
+                              </span>
+                            </div>
+                          );
+                        });
+                      })()}
                     </div>
                   </div>
                 )}
