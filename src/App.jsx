@@ -3134,7 +3134,7 @@ function GuideView({ onBack, c }) {
     },
     {
       emoji: "👤", title: "機師頁面", en: "Pilot Profile",
-      content: "點任何機師可以進入個人頁面：\n• 查看你們所有的合飛紀錄與飛行時間\n• 編輯機師基本資料（大家共享）\n• 新增公開筆記（大家共享）\n• 快速設定紅黃綠燈\n• 編輯或刪除個別飛行紀錄",
+      content: "點任何機師可以進入個人頁面：\n• 查看你們所有的合飛紀錄與飛行時間\n• 編輯機師基本資料（大家共享）\n• 新增長期筆記（大家共享）\n• 快速設定紅黃綠燈\n• 編輯或刪除個別飛行紀錄",
     },
     {
       emoji: "⬇", title: "備份資料", en: "Backup",
@@ -3536,6 +3536,15 @@ export default function App() {
     else                                              { setAuthStep("passcode"); }
   }, []);
 
+  // ── Update last login timestamp when user authenticates ──────────────────────
+  // This runs when: 1) user logs in, OR 2) app loads with saved username
+  useEffect(() => {
+    // Only record login when user is in the app (fully authenticated)
+    if (authStep === "app" && username) {
+      recordLogin(username);
+    }
+  }, [authStep, username]);
+
 
   // ─────────────────────────────────────────────────────────────────────────
   // §16  FIRESTORE LISTENERS
@@ -3908,6 +3917,7 @@ export default function App() {
   /** 
    * Vote on a crew member's status and record the vote.
    * Each user can only have ONE active vote - new votes replace old ones.
+   * Deselecting (clicking same button) removes the vote entirely.
    * Tracks: username, status color, timestamp
    */
   const voteStatus = (id, newStatus) => {
@@ -3917,24 +3927,36 @@ export default function App() {
       // Initialize votes array if it doesn't exist
       const votes = m.votes || [];
       
+      // Check if user is deselecting (clicking the same status to turn it off)
+      const isDeselecting = m.status === newStatus;
+      
       // Remove any previous votes from this user
       const votesWithoutCurrentUser = votes.filter(v => v.username !== username);
       
-      // Add new vote record
-      const newVote = {
-        username,
-        status: newStatus,
-        timestamp: Date.now(),
-      };
-      
-      // Combine: new vote + other users' votes (keep last 20 total)
-      const updatedVotes = [newVote, ...votesWithoutCurrentUser].slice(0, 20);
-      
-      return { 
-        ...m, 
-        status: m.status === newStatus ? null : newStatus,
-        votes: updatedVotes 
-      };
+      if (isDeselecting) {
+        // User is deselecting - remove their vote entirely
+        return { 
+          ...m, 
+          status: null,
+          votes: votesWithoutCurrentUser 
+        };
+      } else {
+        // User is voting - add new vote record
+        const newVote = {
+          username,
+          status: newStatus,
+          timestamp: Date.now(),
+        };
+        
+        // Combine: new vote + other users' votes (keep last 20 total)
+        const updatedVotes = [newVote, ...votesWithoutCurrentUser].slice(0, 20);
+        
+        return { 
+          ...m, 
+          status: newStatus,
+          votes: updatedVotes 
+        };
+      }
     }));
   };
 
@@ -5050,7 +5072,7 @@ export default function App() {
           {/* Long-term notes (shared) */}
           <div style={{ marginBottom: 16 }}>
             <div style={{ fontSize: 9, letterSpacing: 3, color: c.sub, fontWeight: 700, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span>公開筆記 NOTES</span>
+              <span>長期筆記 NOTES</span>
               <button
                 onClick={() => {
                   if (editNotes) { patchCrew(m.id, { notes: tempNotes }); setEditNotes(false); }
